@@ -5,9 +5,9 @@ import wntiv.wasm_output.Writable;
 import java.io.DataOutputStream;
 import java.io.IOException;
 
-public record TableType(Limits size, PrimativeTypes refType) implements Writable {
+public record TableType(Limits size, ValueType refType) implements Writable {
 	public TableType {
-		if (refType != PrimativeTypes.FUNCTION_REF && refType != PrimativeTypes.EXTERNAL_REF)
+		if (!ValueType.isReferenceType(refType))
 			throw new IllegalArgumentException("refType must be a valid reference type");
 	}
 	@Override

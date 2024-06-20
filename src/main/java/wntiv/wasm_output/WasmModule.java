@@ -1,12 +1,14 @@
 package wntiv.wasm_output;
 
 import jdk.jfr.Unsigned;
+import wntiv.wasm_output.types.GlobalType;
+import wntiv.wasm_output.types.IndexType;
+import wntiv.wasm_output.types.MemoryType;
+import wntiv.wasm_output.types.TableType;
 
 import java.io.*;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import wntiv.wasm_output.*;
 //	final File jsOut = new File("out.js");
 //		File wasmOutFile = new File("out.wasm");
 
@@ -95,19 +97,51 @@ public class WasmModule {
 		byte sectionType() {
 			return IMPORT_SECTION;
 		}
-		static class Type {}
+		static class ImportDescriptor implements Writable {
+			protected static @Unsigned byte TYPE_INDEX = 0x00;
+			protected static @Unsigned byte TABLE_TYPE = 0x01;
+			protected static @Unsigned byte MEMORY_TYPE = 0x02;
+			protected static @Unsigned byte GLOBAL_TYPE = 0x03;
+			private final @Unsigned byte type;
+			private final Writable value;
+
+			ImportDescriptor(IndexType typeIndex) {
+				type = TYPE_INDEX;
+				value = typeIndex;
+			}
+			ImportDescriptor(TableType table) {
+				type = TABLE_TYPE;
+				value = table;
+			}
+			ImportDescriptor(MemoryType memory) {
+				type = MEMORY_TYPE;
+				value = memory;
+			}
+			ImportDescriptor(GlobalType global) {
+				type = GLOBAL_TYPE;
+				value = global;
+			}
+
+			@Override
+			public void write(DataOutputStream target) throws IOException {
+				target.writeByte(type);
+				value.write(target);
+			}
+		}
 		static class Import implements Writable {
 			public final String moduleName;
 			public final String importName;
-			public final Type importType;
-			Import(String module, String symbol) {
+			public final ImportDescriptor importType;
+			Import(String module, String symbol, ImportDescriptor type) {
 				moduleName = module;
 				importName = symbol;
+				importType = type;
 			}
 			@Override
 			public void write(DataOutputStream target) throws IOException {
 				Util.writeName(target, moduleName);
 				Util.writeName(target, importName);
+				importType.write(target);
 			}
 		}
 	}

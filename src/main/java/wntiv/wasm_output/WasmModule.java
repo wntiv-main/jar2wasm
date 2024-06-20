@@ -23,7 +23,14 @@ public class WasmModule {
 	private final DataSection data = new DataSection();
 	private final CodeSection code = new CodeSection();
 
-//	public IndexType addFunction(code??)...
+	public IndexType addFunction(FunctionFactory functionSpec) {
+		WritableCollection<CodeSection.Locals> locals = new WritableCollection<>();
+		for (var entry : functionSpec.getLocals().entrySet()) {
+			locals.elements.add(new CodeSection.Locals(entry.getValue(), entry.getKey()));
+		}
+		Expression expr = new Expression(functionSpec.getCode());
+		return new IndexType(code.add(new CodeSection.Function(locals, expr)));
+	}
 //	public void export(IndexType function) ...?
 
 	public void write(DataOutputStream target) throws IOException {
@@ -80,6 +87,10 @@ public class WasmModule {
 		private final List<T> elements = new ArrayList<>();
 		public int size() {
 			return elements.size();
+		}
+		public int add(T element) {
+			elements.add(element);
+			return size() - 1;
 		}
 		@Override
 		public void write(DataOutputStream target) throws IOException {
@@ -371,8 +382,12 @@ public class WasmModule {
 		record Function(WritableCollection<Locals> locals, Expression code) implements Writable {
 			@Override
 			public void write(DataOutputStream target) throws IOException {
-				locals.write(target);
-				code.write(target);
+				ByteArrayOutputStream buf = new ByteArrayOutputStream();
+				DataOutputStream bufView = new DataOutputStream(buf);
+				locals.write(bufView);
+				code.write(bufView);
+				Util.writeVarUInt(target, buf.size()); // Prefix length
+				buf.writeTo(target);
 			}
 		}
 	}

@@ -11,11 +11,33 @@ import java.util.List;
 public class WasmModule {
 	public static final byte[] WASM_MAGIC = {0x00, 'a', 's', 'm'};
 	public static final byte[] WASM_VERSION = {0x01, 0x00, 0x00, 0x00};
+	private final TypeSection types = new TypeSection();
+	private final ImportSection imports = new ImportSection();
+	private final FunctionSection function_types = new FunctionSection();
+	private final TableSection tables = new TableSection();
+	private final MemorySection memory = new MemorySection();
+	private final GlobalSection globals = new GlobalSection();
+	private final ExportSection exports = new ExportSection();
+	private @Nullable StartSection start = null;
+	private final ElementSection elements = new ElementSection();
 	private final DataSection data = new DataSection();
 	private final CodeSection code = new CodeSection();
+
+//	public IndexType addFunction(code??)...
+//	public void export(IndexType function) ...?
+
 	public void write(DataOutputStream target) throws IOException {
 		target.write(WASM_MAGIC);
 		target.write(WASM_VERSION);
+		writeSection(target, types);
+		writeSection(target, imports);
+		writeSection(target, function_types);
+		writeSection(target, tables);
+		writeSection(target, memory);
+		writeSection(target, globals);
+		writeSection(target, exports);
+		if (start != null) writeSection(target, start);
+		writeSection(target, elements);
 		{
 			// Handle data count section specially
 			target.writeByte(Section.DATA_COUNT_SECTION);
@@ -28,6 +50,7 @@ public class WasmModule {
 		writeSection(target, data);
 	}
 	private static void writeSection(DataOutputStream target, Section section) throws IOException {
+		if (section instanceof WritableCollection<?> collectionSection && collectionSection.size() == 0) return;
 		ByteArrayOutputStream sectionData = new ByteArrayOutputStream();
 		section.write(new DataOutputStream(sectionData));
 		if (sectionData.size() > 0) {
@@ -236,7 +259,28 @@ public class WasmModule {
 
 			@Override
 			public void write(DataOutputStream target) throws IOException {
-				// TODO
+				boolean passive_declarative = tableOffset == null;
+				boolean declarative_table_offset = tableIndex.index() != 0;
+				boolean expressions = initializer instanceof Expression;
+				target.writeByte((passive_declarative ? 0b001 : 0)
+						| (declarative_table_offset ? 0b010 : 0)
+						| (expressions ? 0b100 : 0));
+				if (!passive_declarative) {
+					if (declarative_table_offset || (expressions && type != ValueType.FUNCTION_REF.asByte())
+							                     || (!expressions && type != 0x00)) {
+						// active_extended
+						tableIndex.write(target);
+						tableOffset.write(target);
+						target.writeByte(type);
+					} else {
+						// active
+						tableOffset.write(target);
+					}
+				} else {
+					// passive/declarative
+					target.writeByte(type);
+				}
+				initializer.write(target);
 			}
 
 			public static ElementSegment passive(byte type, WritableCollection<IndexType> initFunctions) {
@@ -254,7 +298,7 @@ public class WasmModule {
 				return new ElementSegment(new IndexType(1), null, refType.asByte(), initializer);
 			}
 			public static ElementSegment active(Expression tableOffset, WritableCollection<IndexType> initFunctions) {
-				return new ElementSegment(new IndexType(0), tableOffset, ValueType.FUNCTION_REF.asByte(), initFunctions);
+				return new ElementSegment(new IndexType(0), tableOffset, (byte) 0x00, initFunctions);
 			}
 			public static ElementSegment active(Expression tableOffset, Expression initializer) {
 				return new ElementSegment(new IndexType(0), tableOffset, ValueType.FUNCTION_REF.asByte(), initializer);
@@ -312,15 +356,24 @@ public class WasmModule {
 			}
 		}
 	}
-	static class CodeSection implements Section {
-		@Override
-		public void write(DataOutputStream target) throws IOException {
-			// TODO:
-		}
-
+	static class CodeSection extends WritableCollection<CodeSection.Function> implements Section {
 		@Override
 		public byte sectionType() {
 			return CODE_SECTION;
+		}
+		record Locals(int count, ValueType type)  implements Writable {
+			@Override
+			public void write(DataOutputStream target) throws IOException {
+				Util.writeVarUInt(target, count);
+				type.write(target);
+			}
+		}
+		record Function(WritableCollection<Locals> locals, Expression code) implements Writable {
+			@Override
+			public void write(DataOutputStream target) throws IOException {
+				locals.write(target);
+				code.write(target);
+			}
 		}
 	}
 }

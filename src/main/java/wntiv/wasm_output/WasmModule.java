@@ -24,7 +24,7 @@ public class WasmModule {
 			// Handle data count section specially
 			target.writeByte(Section.DATA_COUNT_SECTION);
 			ByteArrayOutputStream contentBuf = new ByteArrayOutputStream();
-			Util.writeVarUInt(new DataOutputStream(contentBuf), data.sectionElements.size());
+			Util.writeVarUInt(new DataOutputStream(contentBuf), data.size());
 			Util.writeVarUInt(target, contentBuf.size());
 			contentBuf.writeTo(target);
 		}
@@ -40,25 +40,28 @@ public class WasmModule {
 			sectionData.writeTo(target);
 		}
 	}
-
-	static abstract class Section implements Writable {
-		public static final @Unsigned byte CUSTOM_SECTION = 0;
-		public static final @Unsigned byte TYPE_SECTION = 1;
-		public static final @Unsigned byte IMPORT_SECTION = 2;
-		public static final @Unsigned byte FUNCTION_SECTION = 3;
-		public static final @Unsigned byte TABLE_SECTION = 4;
-		public static final @Unsigned byte MEMORY_SECTION = 5;
-		public static final @Unsigned byte GLOBAL_SECTION = 6;
-		public static final @Unsigned byte EXPORT_SECTION = 7;
-		public static final @Unsigned byte START_SECTION = 8;
-		public static final @Unsigned byte ELEMENT_SECTION = 9;
-		public static final @Unsigned byte CODE_SECTION = 10;
-		public static final @Unsigned byte DATA_SECTION = 11;
-		public static final @Unsigned byte DATA_COUNT_SECTION = 12;
-		abstract byte sectionType();
+	// https://webassembly.github.io/spec/core/binary/modules.html
+	interface Section extends Writable {
+		@Unsigned byte CUSTOM_SECTION = 0;
+		@Unsigned byte TYPE_SECTION = 1;
+		@Unsigned byte IMPORT_SECTION = 2;
+		@Unsigned byte FUNCTION_SECTION = 3;
+		@Unsigned byte TABLE_SECTION = 4;
+		@Unsigned byte MEMORY_SECTION = 5;
+		@Unsigned byte GLOBAL_SECTION = 6;
+		@Unsigned byte EXPORT_SECTION = 7;
+		@Unsigned byte START_SECTION = 8;
+		@Unsigned byte ELEMENT_SECTION = 9;
+		@Unsigned byte CODE_SECTION = 10;
+		@Unsigned byte DATA_SECTION = 11;
+		@Unsigned byte DATA_COUNT_SECTION = 12;
+		public byte sectionType();
 	}
-	static abstract class CollectionSection<T extends Writable> extends Section implements Writable {
-		protected final List<T> sectionElements = new ArrayList<>();
+	static abstract class CollectionSection<T extends Writable> implements Section {
+		private final List<T> sectionElements = new ArrayList<>();
+		public int size() {
+			return sectionElements.size();
+		}
 		@Override
 		public void write(DataOutputStream target) throws IOException {
 			Util.writeVarUInt(target, sectionElements.size());
@@ -69,7 +72,7 @@ public class WasmModule {
 	}
 	static class TypeSection extends CollectionSection<TypeSection.FunctionType> {
 		@Override
-		byte sectionType() {
+		public byte sectionType() {
 			return TYPE_SECTION;
 		}
 		static class FunctionType implements Writable {
@@ -94,7 +97,7 @@ public class WasmModule {
 	}
 	static class ImportSection extends CollectionSection<ImportSection.Import> {
 		@Override
-		byte sectionType() {
+		public byte sectionType() {
 			return IMPORT_SECTION;
 		}
 		static class ImportDescriptor implements Writable {
@@ -128,29 +131,93 @@ public class WasmModule {
 				value.write(target);
 			}
 		}
-		static class Import implements Writable {
-			public final String moduleName;
-			public final String importName;
-			public final ImportDescriptor importType;
-			Import(String module, String symbol, ImportDescriptor type) {
-				moduleName = module;
-				importName = symbol;
-				importType = type;
-			}
+		record Import(String moduleName, String importName, ImportDescriptor type) implements Writable {
 			@Override
 			public void write(DataOutputStream target) throws IOException {
 				Util.writeName(target, moduleName);
 				Util.writeName(target, importName);
-				importType.write(target);
+				type.write(target);
 			}
+		}
+	}
+	static class FunctionSection extends CollectionSection<IndexType> {
+		@Override
+		public byte sectionType() {
+			return FUNCTION_SECTION;
+		}
+	}
+	static class TableSection extends CollectionSection<TableType> {
+		@Override
+		public byte sectionType() {
+			return TABLE_SECTION;
+		}
+	}
+	static class MemorySection extends CollectionSection<MemoryType> {
+		@Override
+		public byte sectionType() {
+			return MEMORY_SECTION;
+		}
+	}
+	static class GlobalSection extends CollectionSection<GlobalSection.Global> {
+		@Override
+		public byte sectionType() {
+			return GLOBAL_SECTION;
+		}
+		record Global(GlobalType type, Expression initialiser) implements Writable {
+			@Override
+			public void write(DataOutputStream target) throws IOException {
+				type.write(target);
+				initialiser.write(target);
+			}
+		}
+	}
+	static class ExportSection extends CollectionSection<ExportSection.Export> {
+		@Override
+		public byte sectionType() {
+			return EXPORT_SECTION;
+		}
+		static class ExportDescriptor implements Writable {
+			protected static @Unsigned byte FUNCTION_TYPE = 0x00;
+			protected static @Unsigned byte TABLE_TYPE = 0x01;
+			protected static @Unsigned byte MEMORY_TYPE = 0x02;
+			protected static @Unsigned byte GLOBAL_TYPE = 0x03;
+			private final @Unsigned byte type;
+			private final IndexType index;
+
+			ExportDescriptor(byte type, int index) {
+				this.type = type;
+				this.index = new IndexType(index);
+			}
+
+			@Override
+			public void write(DataOutputStream target) throws IOException {
+				target.writeByte(type);
+				index.write(target);
+			}
+		}
+		record Export(String exportName, ExportDescriptor type) implements Writable {
+			@Override
+			public void write(DataOutputStream target) throws IOException {
+				Util.writeName(target, exportName);
+				type.write(target);
+			}
+		}
+	}
+	record StartSection(IndexType functionIndex) implements Section {
+		@Override
+		public byte sectionType() {
+			return START_SECTION;
+		}
+		@Override
+		public void write(DataOutputStream target) throws IOException {
+			functionIndex.write(target);
 		}
 	}
 	static class DataSection extends CollectionSection<DataSection.DataSegment> {
 		@Override
-		byte sectionType() {
+		public byte sectionType() {
 			return DATA_SECTION;
 		}
-
 		static class DataSegment implements Writable {
 			public static final @Unsigned int PASSIVE_BIT = 0x01;
 			public static final @Unsigned int EXPLICIT_MEMORY_INDEX_BIT = 0x02;
@@ -190,14 +257,14 @@ public class WasmModule {
 			}
 		}
 	}
-	static class CodeSection extends Section {
+	static class CodeSection implements Section {
 		@Override
 		public void write(DataOutputStream target) throws IOException {
 			// TODO:
 		}
 
 		@Override
-		byte sectionType() {
+		public byte sectionType() {
 			return CODE_SECTION;
 		}
 	}

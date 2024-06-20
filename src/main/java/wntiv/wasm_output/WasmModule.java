@@ -1,16 +1,12 @@
 package wntiv.wasm_output;
 
 import jdk.jfr.Unsigned;
-import wntiv.wasm_output.types.GlobalType;
-import wntiv.wasm_output.types.IndexType;
-import wntiv.wasm_output.types.MemoryType;
-import wntiv.wasm_output.types.TableType;
+import org.jetbrains.annotations.Nullable;
+import wntiv.wasm_output.types.*;
 
 import java.io.*;
 import java.util.ArrayList;
 import java.util.List;
-//	final File jsOut = new File("out.js");
-//		File wasmOutFile = new File("out.wasm");
 
 public class WasmModule {
 	public static final byte[] WASM_MAGIC = {0x00, 'a', 's', 'm'};
@@ -57,20 +53,20 @@ public class WasmModule {
 		@Unsigned byte DATA_COUNT_SECTION = 12;
 		public byte sectionType();
 	}
-	static abstract class CollectionSection<T extends Writable> implements Section {
-		private final List<T> sectionElements = new ArrayList<>();
+	static class WritableCollection<T extends Writable> implements Writable {
+		private final List<T> elements = new ArrayList<>();
 		public int size() {
-			return sectionElements.size();
+			return elements.size();
 		}
 		@Override
 		public void write(DataOutputStream target) throws IOException {
-			Util.writeVarUInt(target, sectionElements.size());
-			for (T elem : sectionElements) {
+			Util.writeVarUInt(target, elements.size());
+			for (T elem : elements) {
 				elem.write(target);
 			}
 		}
 	}
-	static class TypeSection extends CollectionSection<TypeSection.FunctionType> {
+	static class TypeSection extends WritableCollection<TypeSection.FunctionType> implements Section {
 		@Override
 		public byte sectionType() {
 			return TYPE_SECTION;
@@ -95,7 +91,7 @@ public class WasmModule {
 			}
 		}
 	}
-	static class ImportSection extends CollectionSection<ImportSection.Import> {
+	static class ImportSection extends WritableCollection<ImportSection.Import> implements Section {
 		@Override
 		public byte sectionType() {
 			return IMPORT_SECTION;
@@ -140,25 +136,25 @@ public class WasmModule {
 			}
 		}
 	}
-	static class FunctionSection extends CollectionSection<IndexType> {
+	static class FunctionSection extends WritableCollection<IndexType> implements Section {
 		@Override
 		public byte sectionType() {
 			return FUNCTION_SECTION;
 		}
 	}
-	static class TableSection extends CollectionSection<TableType> {
+	static class TableSection extends WritableCollection<TableType> implements Section {
 		@Override
 		public byte sectionType() {
 			return TABLE_SECTION;
 		}
 	}
-	static class MemorySection extends CollectionSection<MemoryType> {
+	static class MemorySection extends WritableCollection<MemoryType> implements Section {
 		@Override
 		public byte sectionType() {
 			return MEMORY_SECTION;
 		}
 	}
-	static class GlobalSection extends CollectionSection<GlobalSection.Global> {
+	static class GlobalSection extends WritableCollection<GlobalSection.Global> implements Section {
 		@Override
 		public byte sectionType() {
 			return GLOBAL_SECTION;
@@ -171,7 +167,7 @@ public class WasmModule {
 			}
 		}
 	}
-	static class ExportSection extends CollectionSection<ExportSection.Export> {
+	static class ExportSection extends WritableCollection<ExportSection.Export> implements Section {
 		@Override
 		public byte sectionType() {
 			return EXPORT_SECTION;
@@ -213,7 +209,66 @@ public class WasmModule {
 			functionIndex.write(target);
 		}
 	}
-	static class DataSection extends CollectionSection<DataSection.DataSegment> {
+	static class ElementSection extends WritableCollection<ElementSection.ElementSegment> implements Section {
+		@Override
+		public byte sectionType() {
+			return ELEMENT_SECTION;
+		}
+
+		// https://webassembly.github.io/spec/core/binary/modules.html#binary-elemsec
+		static class ElementSegment implements Writable {
+			// Passive (tableIndex = 0, tableOffset = null)
+			// Declarative (tableIndex != 0, tableOffset = null)
+			// Active (tableIndex = ?, tableOffset != null)
+			public final IndexType tableIndex;
+			public final @Nullable Expression tableOffset;
+			// reftype | elementkind
+			public final byte type;
+			// Union[WritableCollection<IndexType> | Expression]
+			public final Writable initializer;
+
+			private ElementSegment(IndexType tableIndex, @Nullable Expression tableOffset, byte type, Writable initializer) {
+				this.tableIndex = tableIndex;
+				this.tableOffset = tableOffset;
+				this.type = type;
+				this.initializer = initializer;
+			}
+
+			@Override
+			public void write(DataOutputStream target) throws IOException {
+				// TODO
+			}
+
+			public static ElementSegment passive(byte type, WritableCollection<IndexType> initFunctions) {
+				return new ElementSegment(new IndexType(0), null, type, initFunctions);
+			}
+			public static ElementSegment passive(ValueType refType, Expression initializer) {
+				assert ValueType.isReferenceType(refType);
+				return new ElementSegment(new IndexType(0), null, refType.asByte(), initializer);
+			}
+			public static ElementSegment declarative(byte elementKind, WritableCollection<IndexType> initFunctions) {
+				return new ElementSegment(new IndexType(1), null, elementKind, initFunctions);
+			}
+			public static ElementSegment declarative(ValueType refType, Expression initializer) {
+				assert ValueType.isReferenceType(refType);
+				return new ElementSegment(new IndexType(1), null, refType.asByte(), initializer);
+			}
+			public static ElementSegment active(Expression tableOffset, WritableCollection<IndexType> initFunctions) {
+				return new ElementSegment(new IndexType(0), tableOffset, ValueType.FUNCTION_REF.asByte(), initFunctions);
+			}
+			public static ElementSegment active(Expression tableOffset, Expression initializer) {
+				return new ElementSegment(new IndexType(0), tableOffset, ValueType.FUNCTION_REF.asByte(), initializer);
+			}
+			public static ElementSegment active(IndexType tableIndex, Expression tableOffset, byte elementKind, WritableCollection<IndexType> initFunctions) {
+				return new ElementSegment(tableIndex, tableOffset, elementKind, initFunctions);
+			}
+			public static ElementSegment active(IndexType tableIndex, Expression tableOffset, ValueType refType, Expression initializer) {
+				assert ValueType.isReferenceType(refType);
+				return new ElementSegment(tableIndex, tableOffset, refType.asByte(), initializer);
+			}
+		}
+	}
+	static class DataSection extends WritableCollection<DataSection.DataSegment> implements Section {
 		@Override
 		public byte sectionType() {
 			return DATA_SECTION;

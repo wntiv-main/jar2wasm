@@ -18,6 +18,10 @@ public enum ValueType implements Writable {
 		value = i;
 	}
 
+	public byte asByte() {
+		return value;
+	}
+
 	@Override
 	public void write(DataOutputStream target) throws IOException {
 		target.writeByte(value);

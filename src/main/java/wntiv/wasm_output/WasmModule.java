@@ -1,11 +1,12 @@
 package wntiv.wasm_output;
 
 import jdk.jfr.Unsigned;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import wntiv.wasm_output.*;
 //	final File jsOut = new File("out.js");
 //		File wasmOutFile = new File("out.wasm");
 
@@ -21,8 +22,8 @@ public class WasmModule {
 			// Handle data count section specially
 			target.writeByte(Section.DATA_COUNT_SECTION);
 			ByteArrayOutputStream contentBuf = new ByteArrayOutputStream();
-			writeVarUInt(new DataOutputStream(contentBuf), data.dataSegments.size());
-			writeVarUInt(target, contentBuf.size());
+			Util.writeVarUInt(new DataOutputStream(contentBuf), data.sectionElements.size());
+			Util.writeVarUInt(target, contentBuf.size());
 			contentBuf.writeTo(target);
 		}
 		writeSection(target, code);
@@ -33,24 +34,12 @@ public class WasmModule {
 		section.write(new DataOutputStream(sectionData));
 		if (sectionData.size() > 0) {
 			target.writeByte(section.sectionType());
-			writeVarUInt(target, sectionData.size());
+			Util.writeVarUInt(target, sectionData.size());
 			sectionData.writeTo(target);
 		}
 	}
-	public static void writeVarInt(DataOutputStream to, long value) throws IOException {
-		// Using SLEB128
-		do {
-			to.writeByte((int) (value & 0x7F) | ((value >>= 7) != 0 && value != -1 ? 0x80 : 0));
-		} while (value != 0 && value != -1);
-	}
-	public static void writeVarUInt(DataOutputStream to, long value) throws IOException {
-		// Using ULEB128
-		do {
-			to.writeByte((int) (value & 0x7F) | ((value >>>= 7) != 0 ? 0x80 : 0));
-		} while (value != 0);
-	}
 
-	static abstract class Section {
+	static abstract class Section implements Writable {
 		public static final @Unsigned byte CUSTOM_SECTION = 0;
 		public static final @Unsigned byte TYPE_SECTION = 1;
 		public static final @Unsigned byte IMPORT_SECTION = 2;
@@ -65,22 +54,23 @@ public class WasmModule {
 		public static final @Unsigned byte DATA_SECTION = 11;
 		public static final @Unsigned byte DATA_COUNT_SECTION = 12;
 		abstract byte sectionType();
-		abstract void write(DataOutputStream target) throws IOException;
 	}
-	static class TypeSection extends Section {
-		private final List<FunctionType> types = new ArrayList<>();
+	static abstract class CollectionSection<T extends Writable> extends Section implements Writable {
+		protected final List<T> sectionElements = new ArrayList<>();
 		@Override
-		void write(DataOutputStream target) throws IOException {
-			writeVarUInt(target, types.size());
-			for (FunctionType type : types) {
-				type.write(target);
+		public void write(DataOutputStream target) throws IOException {
+			Util.writeVarUInt(target, sectionElements.size());
+			for (T elem : sectionElements) {
+				elem.write(target);
 			}
 		}
+	}
+	static class TypeSection extends CollectionSection<TypeSection.FunctionType> {
 		@Override
 		byte sectionType() {
 			return TYPE_SECTION;
 		}
-		static class FunctionType {
+		static class FunctionType implements Writable {
 			public static final @Unsigned byte I32_TYPE = 0x7F;
 			public static final @Unsigned byte I64_TYPE = 0x7E;
 			public static final @Unsigned byte F32_TYPE = 0x7D;
@@ -90,32 +80,44 @@ public class WasmModule {
 			public static final @Unsigned byte EXTERNAL_REF_TYPE = 0x6F;
 			private final List<Byte> arguments = new ArrayList<>();
 			private final List<Byte> results = new ArrayList<>();
-			void write(DataOutputStream target) throws IOException {
+			@Override
+			public void write(DataOutputStream target) throws IOException {
 				target.writeByte(0x60); // Function type
-				writeVarUInt(target, arguments.size());
+				Util.writeVarUInt(target, arguments.size());
 				for (byte arg_type : arguments) target.writeByte(arg_type);
-				writeVarUInt(target, results.size());
+				Util.writeVarUInt(target, results.size());
 				for (byte result_type : results) target.writeByte(result_type);
 			}
 		}
 	}
-	static class DataSection extends Section {
-		List<DataSegment> dataSegments = new ArrayList<>();
-
+	static class ImportSection extends CollectionSection<ImportSection.Import> {
 		@Override
-		void write(DataOutputStream target) throws IOException {
-			writeVarUInt(target, dataSegments.size());
-			for (DataSegment segment : dataSegments) {
-				segment.write(target);
+		byte sectionType() {
+			return IMPORT_SECTION;
+		}
+		static class Type {}
+		static class Import implements Writable {
+			public final String moduleName;
+			public final String importName;
+			public final Type importType;
+			Import(String module, String symbol) {
+				moduleName = module;
+				importName = symbol;
+			}
+			@Override
+			public void write(DataOutputStream target) throws IOException {
+				Util.writeName(target, moduleName);
+				Util.writeName(target, importName);
 			}
 		}
-
+	}
+	static class DataSection extends CollectionSection<DataSection.DataSegment> {
 		@Override
 		byte sectionType() {
 			return DATA_SECTION;
 		}
 
-		static class DataSegment {
+		static class DataSegment implements Writable {
 			public static final @Unsigned int PASSIVE_BIT = 0x01;
 			public static final @Unsigned int EXPLICIT_MEMORY_INDEX_BIT = 0x02;
 			final boolean passive;
@@ -136,27 +138,27 @@ public class WasmModule {
 				this.memoryIndex = memoryIndex;
 				this.offsetExpression = offsetExpression;
 			}
-
-			void write(DataOutputStream target) throws IOException {
+			@Override
+			public void write(DataOutputStream target) throws IOException {
 				int flags = 0;
 				if (passive) flags |= PASSIVE_BIT;
 				if (memoryIndex != 0) flags |= EXPLICIT_MEMORY_INDEX_BIT;
-				writeVarUInt(target, flags);
+				Util.writeVarUInt(target, flags);
 				if (memoryIndex != 0) {
-					writeVarUInt(target, memoryIndex);
+					Util.writeVarUInt(target, memoryIndex);
 				}
 				if (!passive) {
 					target.write(offsetExpression);
 					target.writeByte(0x0B); // End of expression
 				}
-				writeVarUInt(target, internalData.size());
+				Util.writeVarUInt(target, internalData.size());
 				internalData.writeTo(target);
 			}
 		}
 	}
 	static class CodeSection extends Section {
 		@Override
-		void write(DataOutputStream target) throws IOException {
+		public void write(DataOutputStream target) throws IOException {
 			// TODO:
 		}
 

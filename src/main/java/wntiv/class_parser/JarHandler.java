@@ -47,7 +47,7 @@ public class JarHandler {
 			methods.put(entry.getKey(), entry.getValue().prepareFunctions());
 		}
 		for (var entry : methods.entrySet()) {
-			for (var method : methods.entrySet()) {
+			for (var method : entry.getValue().entrySet()) {
 				var functionIndex = module.addFunction(method.getValue());
 				// entry.getValue().resolveDependencies(methods);
 			}

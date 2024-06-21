@@ -73,4 +73,7 @@ public class IntermediaryMethod implements WasmFunction {
 		while (codeIndex.get(end) <= j) end++;
 		return IntStream.range(start, end).mapToObj(x -> new Pair<>(codeIndex.get(x), code.get(x)));
 	}
+	public Stream<Pair<Integer, Operation>> getBlockAt(int i) {
+		// TODO: get code "block" that resides here
+	}
 }

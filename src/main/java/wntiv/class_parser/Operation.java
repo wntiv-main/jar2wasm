@@ -1,5 +1,6 @@
 package wntiv.class_parser;
 
+import wntiv.Pair;
 import wntiv.wasm_output.Util;
 import wntiv.wasm_output.types.ValueType;
 
@@ -7,7 +8,9 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.*;
 import java.util.function.IntSupplier;
+import java.util.stream.IntStream;
 
 public interface Operation {
 	String[] ARRAY_TYPES = new String[]{"BOOLEAN", "CHAR", "FLOAT", "DOUBLE", "BYTE", "SHORT", "INT", "LONG"};
@@ -186,26 +189,17 @@ public interface Operation {
 			case 0xa8 /* jsr */ -> throw new RuntimeException("JSR " + input.readShort());
 			case 0xa9 /* ret */ -> throw new RuntimeException("RET " + input.readUnsignedByte());
 			case 0xaa /* tableswitch */ -> {
-				result.append("TABLESWITCH {");
 				// Magic ;) dont question it
 				input.skipNBytes((-methodIndex.getAsInt()) & 0b11);
-				result.append("\n\tdefault: ");
-				result.append(input.readInt());
+				int defaultValue = input.readInt();
 				int low = input.readInt();
 				int high = input.readInt();
 				int numPairs = high - low + 1;
+				List<Integer> mappings = new ArrayList<>(numPairs);
 				while (numPairs-- > 0) {
-					if (numPairs == 0 || numPairs == high - low) {
-						result.append(",\n\tcase 0x");
-						String hexString = Integer.toUnsignedString(high - numPairs, 16);
-						while (hexString.length() < 2 * Integer.BYTES) hexString = '0' + hexString;
-						result.append(hexString);
-						result.append(": ");
-					} else result.append(",\n\t                 ");
-					result.append(instructionPointer + input.readInt());
+					mappings.add(high - numPairs, input.readInt());
 				}
-				result.append("\n}");
-				yield null;
+				yield new JumpTable(defaultValue, low, mappings);
 			}
 			case 0xab /* lookupswitch */ -> {
 				result.append("LOOKUPSWITCH {");
@@ -452,4 +446,54 @@ public interface Operation {
 		}
 	}
 	record GoTo(int jumpTarget) implements Operation {}
+	record JumpTable(int defaultIndex, int firstMatch, List<Integer> jumpIndices) implements Operation {
+		@Override
+		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+			// valueIndex -> [jumpIndex]
+			var indicesByValue = IntStream.range(0, jumpIndices.size() + 1)
+							.mapToObj(i -> new Pair<>(i, i >= jumpIndices.size() ? defaultIndex : jumpIndices.get(i)))
+							.sorted(Comparator.comparingInt(Pair::second)).toList();
+			// placementIndex[jumpIndex]
+			var valueOrder = IntStream.range(0, jumpIndices.size() + 1)
+							.mapToObj(i -> new Pair<>(i, indicesByValue.get(i).first()))
+							.sorted(Comparator.comparingInt(Pair::second))
+							.map(Pair::first).toList();
+			out.writeByte(0x41); // i32.const
+			Util.writeVarInt(out, firstMatch);
+			out.writeByte(0x6B); // i32.sub (now firstIndex is at 0)
+			// block entries
+			for (int i = 0; i <= jumpIndices.size(); i++) {
+				out.writeByte(0x02); // block
+				out.writeByte(0x40); // no result (TODO: should this be this way?)
+			}
+			out.writeByte(0x0E); // br_table
+			Util.writeVarUInt(out, jumpIndices.size());
+			valueOrder.forEach(idx -> { // write block ordering
+				try {
+					Util.writeVarUInt(out, idx);
+				} catch (IOException e) {
+					throw new RuntimeException(e);
+				}
+			});
+			// block closures
+			for (int i = 0; i < indicesByValue.size(); i++) {
+				intermediaryMethod.getBlockAt(index + indicesByValue.get(i).second()).forEachOrdered(pair -> {
+					try {
+						pair.second().writeWasm(pair.first(), intermediaryMethod, out, context);
+					} catch (IOException e) {
+						throw new UncheckedIOException(e);
+					}
+				});
+				try {
+					if (indicesByValue.size() - i > 1) {
+						out.writeByte(0x0C); // br: break out of switch (TODO: continuations)
+						Util.writeVarInt(out, indicesByValue.size() - i);
+					}
+					out.writeByte(0x0B); // end
+				} catch (IOException e) {
+					throw new RuntimeException(e);
+				}
+			}
+		}
+	}
 }

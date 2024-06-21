@@ -6,6 +6,7 @@ import wntiv.wasm_output.types.ValueType;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.function.IntSupplier;
 
 public interface Operation {
@@ -20,8 +21,8 @@ public interface Operation {
 		CHAR,
 		SHORT;
 	}
-	default void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {}
-	static Operation readFromStream(DataInputStream input, IntSupplier alignment, ClassHandler.ConstantPool pool) throws IOException {
+	default void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {}
+	static Operation readFromStream(IntermediaryMethod method, DataInputStream input, IntSupplier methodIndex, ClassHandler.ConstantPool pool) throws IOException {
 		int opcode = input.readUnsignedByte();
 //		StringBuilder result = new StringBuilder(); // TODO: TEMP
 //		int instructionPointer = 0;
@@ -167,27 +168,27 @@ public interface Operation {
 			case 0x96 /* fcmpg */ -> new Compare(ValueType.F32, true); // We need to translate
 			case 0x97 /* dcmpl */ -> new Compare(ValueType.F64, false);
 			case 0x98 /* dcmpg */ -> new Compare(ValueType.F64, true);
-			case 0x99 /* ifeq */ -> result.append("IFEQ ").append(instructionPointer + input.readShort());
-			case 0x9a /* ifne */ -> result.append("IFNE ").append(instructionPointer + input.readShort());
-			case 0x9b /* iflt */ -> result.append("IFLT ").append(instructionPointer + input.readShort());
-			case 0x9c /* ifge */ -> result.append("IFGE ").append(instructionPointer + input.readShort());
-			case 0x9d /* ifgt */ -> result.append("IFGT ").append(instructionPointer + input.readShort());
-			case 0x9e /* ifle */ -> result.append("IFLE ").append(instructionPointer + input.readShort());
-			case 0x9f /* if_icmpeq */ -> result.append("IF_ICMPEQ ").append(instructionPointer + input.readShort());
-			case 0xa0 /* if_icmpne */ -> result.append("IF_ICMPNE ").append(instructionPointer + input.readShort());
-			case 0xa1 /* if_icmplt */ -> result.append("IF_ICMPLT ").append(instructionPointer + input.readShort());
-			case 0xa2 /* if_icmpge */ -> result.append("IF_ICMPGE ").append(instructionPointer + input.readShort());
-			case 0xa3 /* if_icmpgt */ -> result.append("IF_ICMPGT ").append(instructionPointer + input.readShort());
-			case 0xa4 /* if_icmple */ -> result.append("IF_ICMPLE ").append(instructionPointer + input.readShort());
-			case 0xa5 /* if_acmpeq */ -> result.append("IF_ACMPEQ ").append(instructionPointer + input.readShort());
-			case 0xa6 /* if_acmpne */ -> result.append("IF_ACMPNE ").append(instructionPointer + input.readShort());
-			case 0xa7 /* goto */ -> result.append("GOTO ").append(instructionPointer + input.readShort());
-			case 0xa8 /* jsr */ -> result.append("JSR ").append(instructionPointer + input.readShort());
-			case 0xa9 /* ret */ -> result.append("RET ").append(input.readUnsignedByte());
+			case 0x99 /* ifeq */ -> new ComparisonConditional(0x46, input.readShort());
+			case 0x9a /* ifne */ -> new ComparisonConditional(0x47, input.readShort());
+			case 0x9b /* iflt */ -> new ComparisonConditional(0x48, input.readShort());
+			case 0x9c /* ifge */ -> new ComparisonConditional(0x4E, input.readShort());
+			case 0x9d /* ifgt */ -> new ComparisonConditional(0x4A, input.readShort());
+			case 0x9e /* ifle */ -> new ComparisonConditional(0x4C, input.readShort());
+			case 0x9f /* if_icmpeq */ -> new FullComparisonConditional(0x46, input.readShort());
+			case 0xa0 /* if_icmpne */ -> new FullComparisonConditional(0x47, input.readShort());
+			case 0xa1 /* if_icmplt */ -> new FullComparisonConditional(0x48, input.readShort());
+			case 0xa2 /* if_icmpge */ -> new FullComparisonConditional(0x4E, input.readShort());
+			case 0xa3 /* if_icmpgt */ -> new FullComparisonConditional(0x4A, input.readShort());
+			case 0xa4 /* if_icmple */ -> new FullComparisonConditional(0x4C, input.readShort());
+			case 0xa5 /* if_acmpeq */ -> new FullComparisonConditional(0xD3, input.readShort()); // GC ext, more research needed
+			case 0xa6 /* if_acmpne */ -> throw new RuntimeException("IF_ACMPNE " + input.readShort());
+			case 0xa7 /* goto */ -> new GoTo(input.readShort());
+			case 0xa8 /* jsr */ -> throw new RuntimeException("JSR " + input.readShort());
+			case 0xa9 /* ret */ -> throw new RuntimeException("RET " + input.readUnsignedByte());
 			case 0xaa /* tableswitch */ -> {
 				result.append("TABLESWITCH {");
 				// Magic ;) dont question it
-				input.skipNBytes((-alignment.getAsInt()) & 0b11);
+				input.skipNBytes((-methodIndex.getAsInt()) & 0b11);
 				result.append("\n\tdefault: ");
 				result.append(input.readInt());
 				int low = input.readInt();
@@ -209,7 +210,7 @@ public interface Operation {
 			case 0xab /* lookupswitch */ -> {
 				result.append("LOOKUPSWITCH {");
 				// Magic ;) dont question it
-				input.skipNBytes((-alignment.getAsInt()) & 0b11);
+				input.skipNBytes((-methodIndex.getAsInt()) & 0b11);
 				result.append("\n\tdefault: ");
 				result.append(input.readInt());
 				int numPairs = input.readInt();
@@ -224,11 +225,11 @@ public interface Operation {
 				result.append("\n}");
 				yield null;
 			}
-			case 0xac /* ireturn */ -> result.append("IRETURN");
-			case 0xad /* lreturn */ -> result.append("LRETURN");
-			case 0xae /* freturn */ -> result.append("FRETURN");
-			case 0xaf /* dreturn */ -> result.append("DRETURN");
-			case 0xb0 /* areturn */ -> result.append("ARETURN");
+			case 0xac /* ireturn */ -> throw new RuntimeException("IRETURN");
+			case 0xad /* lreturn */ -> throw new RuntimeException("LRETURN");
+			case 0xae /* freturn */ -> throw new RuntimeException("FRETURN");
+			case 0xaf /* dreturn */ -> throw new RuntimeException("DRETURN");
+			case 0xb0 /* areturn */ -> throw new RuntimeException("ARETURN");
 			case 0xb1 /* return */ -> new DirectTranslation(0x0F);
 			case 0xb2 /* getstatic */ -> {
 				if (!(pool.get(input.readUnsignedShort()) instanceof ClassHandler.ConstantFieldRefInfo field))
@@ -240,14 +241,14 @@ public interface Operation {
 					throw new RuntimeException("Not a field");
 				yield new PutStatic(field);
 			}
-			case 0xb4 /* getfield */ -> result.append("GETFIELD ").append(pool.get(input.readUnsignedShort()));
-			case 0xb5 /* putfield */ -> result.append("PUT_FIELD ").append(pool.get(input.readUnsignedShort()));
-			case 0xb6 /* invokevirtual */ -> result.append("INVOKE_VIRTUAL ").append(pool.get(input.readUnsignedShort()));
-			case 0xb7 /* invokespecial */ -> result.append("INVOKE_SPECIAL ").append(pool.get(input.readUnsignedShort()));
+			case 0xb4 /* getfield */ -> throw new RuntimeException("GETFIELD " + pool.get(input.readUnsignedShort()));
+			case 0xb5 /* putfield */ -> throw new RuntimeException("PUT_FIELD " + pool.get(input.readUnsignedShort()));
+			case 0xb6 /* invokevirtual */ -> throw new RuntimeException("INVOKE_VIRTUAL " + pool.get(input.readUnsignedShort()));
+			case 0xb7 /* invokespecial */ -> throw new RuntimeException("INVOKE_SPECIAL " + pool.get(input.readUnsignedShort()));
 			case 0xb8 /* invokestatic */ -> {
-				if (!(pool.get(input.readUnsignedShort()) instanceof ClassHandler.ConstantMethodRefInfo method))
+				if (!(pool.get(input.readUnsignedShort()) instanceof ClassHandler.ConstantMethodRefInfo func))
 					throw new RuntimeException("Not a method");
-				yield new InvokeMethod(method);
+				yield new InvokeMethod(func);
 			}
 			case 0xb9 /* invokeinterface */ -> {
 				result.append("INVOKE_INTERFACE ").append(pool.get(input.readUnsignedShort()))
@@ -256,55 +257,52 @@ public interface Operation {
 				yield null;
 			}
 			case 0xba /* invokedynamic */ -> {
-				result.append("INVOKE_DYNAMIC ").append(pool.get(input.readUnsignedShort()));
+				throw new RuntimeException("INVOKE_DYNAMIC " + pool.get(input.readUnsignedShort()));
 				assert input.readShort() == 0;
 				yield null;
 			}
-			case 0xbb /* new */ -> result.append("NEW ").append(pool.get(input.readUnsignedShort()));
-			case 0xbc /* newarray */ -> result.append("NEW_ARRAY ").append(ARRAY_TYPES[input.readByte() - 4]);
-			case 0xbd /* anewarray */ -> result.append("ANEWARRAY ").append(pool.get(input.readUnsignedShort()));
-			case 0xbe /* arraylength */ -> result.append("ARRAYLENGTH");
-			case 0xbf /* athrow*/ -> result.append("ATHROW");
-			case 0xc0 /* checkcast */ -> result.append("CHECKCAST ").append(pool.get(input.readUnsignedShort()));
-			case 0xc1 /* instanceof */ -> result.append("INSTANCEOF ").append(pool.get(input.readUnsignedShort()));
-			case 0xc2 /* monitorenter */ -> result.append("MONITORENTER");
-			case 0xc3 /* monitorexit */ -> result.append("MONITOREXIT");
+			case 0xbb /* new */ -> throw new RuntimeException("NEW " + pool.get(input.readUnsignedShort()));
+			case 0xbc /* newarray */ -> throw new RuntimeException("NEW_ARRAY " + ARRAY_TYPES[input.readByte() - 4]);
+			case 0xbd /* anewarray */ -> throw new RuntimeException("ANEWARRAY " + pool.get(input.readUnsignedShort()));
+			case 0xbe /* arraylength */ -> throw new RuntimeException("ARRAYLENGTH");
+			case 0xbf /* athrow*/ -> throw new RuntimeException("ATHROW");
+			case 0xc0 /* checkcast */ -> throw new RuntimeException("CHECKCAST " + pool.get(input.readUnsignedShort()));
+			case 0xc1 /* instanceof */ -> throw new RuntimeException("INSTANCEOF " + pool.get(input.readUnsignedShort()));
+			case 0xc2 /* monitorenter */ -> throw new RuntimeException("MONITORENTER");
+			case 0xc3 /* monitorexit */ -> throw new RuntimeException("MONITOREXIT");
 			case 0xc5 /* multianewarray */ -> result.append("MULTIANEWARRAY ").append(pool.get(input.readUnsignedShort()))
 					.append(" ").append(input.readUnsignedByte());
 			case 0xc6 /* ifnull */ -> new NullCheck(false, input.readShort());
 			case 0xc7 /* ifnonnull */ -> new NullCheck(true, input.readShort());
-			case 0xc8 /* goto_w */ -> result.append("GOTO_W ").append(instructionPointer + input.readInt());
-			case 0xc9 /* jsr_w */ -> result.append("JSR_W ").append(instructionPointer + input.readInt());
-			case 0xc4 /* wide */ -> {
-				result.append("WIDE ");
-				yield switch (opcode = input.readUnsignedByte()) {
-					case 0x15 /* iload */ -> new PushLocal(input.readUnsignedShort());
-					case 0x16 /* lload */ -> new PushLocal(input.readUnsignedShort());
-					case 0x17 /* fload */ -> new PushLocal(input.readUnsignedShort());
-					case 0x18 /* dload */ -> new PushLocal(input.readUnsignedShort());
-					case 0x19 /* aload */ -> new PushLocal(input.readUnsignedShort());
-					case 0x36 /* istore */ -> new PopLocal(input.readUnsignedShort());
-					case 0x37 /* lstore */ -> new PopLocal(input.readUnsignedShort());
-					case 0x38 /* fstore */ -> new PopLocal(input.readUnsignedShort());
-					case 0x39 /* dstore */ -> new PopLocal(input.readUnsignedShort());
-					case 0x3a /* astore */ -> new PopLocal(input.readUnsignedShort());
-					case 0x84 /* iinc */ -> new IncrementLocal(input.readUnsignedShort(), input.readShort());
-					case 0xa9 /* ret */ -> result.append("RET ").append(input.readUnsignedShort());
-					default -> result.append("UNKNOWN");
-				};
-			}
-			default -> result.append("UNKNOWN");
+			case 0xc8 /* goto_w */ -> throw new RuntimeException("GOTO_W " + input.readInt());
+			case 0xc9 /* jsr_w */ -> throw new RuntimeException("JSR_W " + input.readInt());
+			case 0xc4 /* wide */ -> switch (opcode = input.readUnsignedByte()) {
+				case 0x15 /* iload */ -> new PushLocal(input.readUnsignedShort());
+				case 0x16 /* lload */ -> new PushLocal(input.readUnsignedShort());
+				case 0x17 /* fload */ -> new PushLocal(input.readUnsignedShort());
+				case 0x18 /* dload */ -> new PushLocal(input.readUnsignedShort());
+				case 0x19 /* aload */ -> new PushLocal(input.readUnsignedShort());
+				case 0x36 /* istore */ -> new PopLocal(input.readUnsignedShort());
+				case 0x37 /* lstore */ -> new PopLocal(input.readUnsignedShort());
+				case 0x38 /* fstore */ -> new PopLocal(input.readUnsignedShort());
+				case 0x39 /* dstore */ -> new PopLocal(input.readUnsignedShort());
+				case 0x3a /* astore */ -> new PopLocal(input.readUnsignedShort());
+				case 0x84 /* iinc */ -> new IncrementLocal(input.readUnsignedShort(), input.readShort());
+				case 0xa9 /* ret */ -> throw new RuntimeException("RET " + input.readUnsignedShort());
+				default -> throw new RuntimeException("UNKNOWN");
+			};
+			default -> throw new RuntimeException("UNKNOWN");
 		};
 	}
 	record DirectTranslation(int opcode) implements Operation {
 		@Override
-		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
 			out.writeByte(opcode);
 		}
 	}
 	record PushConst(ValueType type, Object value) implements Operation {
 		@Override
-		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
 			switch (type) {
 				case I32 -> { out.writeByte(0x41); Util.writeVarInt(out, (int) value); }
 				case I64 -> { out.writeByte(0x42); Util.writeVarInt(out, (long) value); }
@@ -316,17 +314,17 @@ public interface Operation {
 	}
 	record PushLocal(int index) implements Operation {
 		@Override
-		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
 			out.writeByte(0x20);
-			Util.writeVarUInt(out, index); // TODO: remapping from java locals to wasm locals
+			Util.writeVarUInt(out, this.index); // TODO: remapping from java locals to wasm locals
 		}
 	}
 	record PushArray(Type type) implements Operation {}
 	record PopLocal(int index) implements Operation {
 		@Override
-		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
 			out.writeByte(0x21);
-			Util.writeVarUInt(out, index); // TODO: remapping from java locals to wasm locals
+			Util.writeVarUInt(out, this.index); // TODO: remapping from java locals to wasm locals
 		}
 	}
 	record PopArray(Type type) implements Operation {}
@@ -345,7 +343,7 @@ public interface Operation {
 		}
 
 		@Override
-		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
 			// TODO: better way than multiply??
 			out.writeByte(intType == ValueType.I32 ? 0x41 :
 			           /* intType == ValueType.I64 ? */ 0x42); // Load const int
@@ -356,19 +354,19 @@ public interface Operation {
 	}
 	record IncrementLocal(int index, short shift) implements Operation {
 		@Override
-		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
 			out.writeByte(0x20); // local.get
-			Util.writeVarUInt(out, index); // TODO: translate locals
+			Util.writeVarUInt(out, this.index); // TODO: translate locals
 			out.writeByte(0x41); // i32.const
 			Util.writeVarInt(out, shift);
 			out.writeByte(0x6A); // i32.add
 			out.writeByte(0x21); // local.set
-			Util.writeVarUInt(out, index); // TODO: translate locals
+			Util.writeVarUInt(out, this.index); // TODO: translate locals
 		}
 	}
 	record TrimInt(int size, boolean unsigned) implements Operation {
 		@Override
-		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
 			out.writeByte(0x41); // i32.const
 			int mask = 0;
 			for (int i = 0; i < size; i++) {
@@ -388,40 +386,70 @@ public interface Operation {
 	}
 	record InvokeMethod(ClassHandler.ConstantMethodRefInfo method) implements Operation {
 		@Override
-		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
 			out.writeByte(0x10); // call
 			Util.writeVarUInt(out, context.getFunctionIndex(method));
 		}
 	}
 	record PutStatic(ClassHandler.ConstantFieldRefInfo field) implements Operation {
 		@Override
-		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
 			out.writeByte(0x24); // global.set
 			Util.writeVarUInt(out, context.getGlobalIndex(field));
 		}
 	}
 	record GetStatic(ClassHandler.ConstantFieldRefInfo field) implements Operation {
 		@Override
-		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
 			out.writeByte(0x23); // global.set
 			Util.writeVarUInt(out, context.getGlobalIndex(field));
 		}
 	}
-	record NullCheck(boolean invert, short jumpTarget) implements Operation {
+	interface Conditional extends Operation {
+		int jumpTarget();
 		@Override
-		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
+		default void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+			if (jumpTarget() < 0) {
+				out.writeByte(0x03); // loop
+			} else out.writeByte(0x04); // if
+			intermediaryMethod.getOpsInRange(index + jumpTarget(), index).forEachOrdered(pair -> {
+				try {
+					pair.second().writeWasm(pair.first(), intermediaryMethod, out, context);
+				} catch (IOException e) {
+					throw new UncheckedIOException(e);
+				}
+			});
+			out.writeByte(0x05); // else
+			// TODO: Handle re-join of branches
+		}
+	}
+	record NullCheck(boolean invert, int jumpTarget) implements Conditional {
+		@Override
+		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
 			out.writeByte(0xD1); // ref.is_null
 			if (invert) {
 				out.writeByte(0x41); // i32.const
 				Util.writeVarInt(out, 1);
 				out.writeByte(0x73); // i32.xor
 			}
-			out.writeByte(0x04); // if
-			// TODO: inline bytes from jump_target
-			out.writeByte(0x05); // else
-			// TODO: conditional magic stuff required
-			out.writeByte(0x0B); // endif
-			// maybe somehow generalize all if statements
+			Conditional.super.writeWasm(index, intermediaryMethod, out, context);
 		}
 	}
+	record ComparisonConditional(int compareCode, int jumpTarget) implements Conditional {
+		@Override
+		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+			out.writeByte(0x41); // i32.const
+			Util.writeVarUInt(out, 0);
+			out.writeByte(compareCode);
+			Conditional.super.writeWasm(index, intermediaryMethod, out, context);
+		}
+	}
+	record FullComparisonConditional(int compareCode, int jumpTarget) implements Conditional {
+		@Override
+		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+			out.writeByte(compareCode);
+			Conditional.super.writeWasm(index, intermediaryMethod, out, context);
+		}
+	}
+	record GoTo(int jumpTarget) implements Operation {}
 }

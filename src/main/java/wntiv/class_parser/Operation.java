@@ -95,65 +95,64 @@ public interface Operation {
 			case 0x5c /* dup2 */ -> new Dup(2, -2);
 			case 0x5d /* dup2_x1 */ -> new Dup(2, 1);
 			case 0x5e /* dup2_x2 */ -> new Dup(2, 2);
-			case 0x5f /* swap */ -> result.append("SWAP");
-			case 0x60 /* iadd */ -> result.append("IADD");
-			case 0x61 /* ladd */ -> result.append("LADD");
-			case 0x62 /* fadd */ -> result.append("FADD");
-			case 0x63 /* dadd */ -> result.append("DADD");
-			case 0x64 /* isub */ -> result.append("ISUB");
-			case 0x65 /* lsub */ -> result.append("LSUB");
-			case 0x66 /* fsub */ -> result.append("FSUB");
-			case 0x67 /* dsub */ -> result.append("DSUB");
-			case 0x68 /* imul */ -> result.append("IMUL");
-			case 0x69 /* lmul */ -> result.append("LMUL");
-			case 0x6a /* fmul */ -> result.append("FMUL");
-			case 0x6b /* dmul */ -> result.append("DMUL");
-			case 0x6c /* idiv */ -> result.append("IDIV");
-			case 0x6d /* ldiv */ -> result.append("LDIV");
-			case 0x6e /* fdiv */ -> result.append("FDIV");
-			case 0x6f /* ddiv */ -> result.append("DDIV");
-			case 0x70 /* irem */ -> result.append("IREM");
-			case 0x71 /* lrem */ -> result.append("LREM");
-			case 0x72 /* frem */ -> result.append("FREM");
-			case 0x73 /* drem */ -> result.append("DREM");
-			case 0x74 /* ineg */ -> result.append("INEG");
-			case 0x75 /* lneg */ -> result.append("LNEG");
-			case 0x76 /* fneg */ -> result.append("FNEG");
-			case 0x77 /* dneg */ -> result.append("DNEG");
-			case 0x78 /* ishl */ -> result.append("ISHL");
-			case 0x79 /* lshl */ -> result.append("LSHL");
-			case 0x7a /* ishr */ -> result.append("ISHR");
-			case 0x7b /* lshr */ -> result.append("LSHR");
-			case 0x7c /* iushr */ -> result.append("IUSHR");
-			case 0x7d /* lushr */ -> result.append("LUSHR");
-			case 0x7e /* iand */ -> result.append("IAND");
-			case 0x7f /* land */ -> result.append("LAND");
-			case 0x80 /* ior */ -> result.append("IOR");
-			case 0x81 /* lor */ -> result.append("LOR");
-			case 0x82 /* ixor */ -> result.append("IXOR");
-			case 0x83 /* lxor */ -> result.append("LXOR");
-			case 0x84 /* iinc */ -> result.append("IINC ").append(input.readUnsignedByte())
-					.append(" ").append(input.readByte());
-			case 0x85 /* i2l */ -> result.append("I2L");
-			case 0x86 /* i2f */ -> result.append("I2F");
-			case 0x87 /* i2d */ -> result.append("I2D");
-			case 0x88 /* l2i */ -> result.append("L2I");
-			case 0x89 /* l2f */ -> result.append("L2F");
-			case 0x8a /* l2d */ -> result.append("L2D");
-			case 0x8b /* f2i */ -> result.append("F2I");
-			case 0x8c /* f2l */ -> result.append("F2L");
-			case 0x8d /* f2d */ -> result.append("F2D");
-			case 0x8e /* d2i */ -> result.append("D2I");
-			case 0x8f /* d2l */ -> result.append("D2L");
-			case 0x90 /* d2f */ -> result.append("D2F");
-			case 0x91 /* i2b */ -> result.append("I2B");
-			case 0x92 /* i2c */ -> result.append("I2C");
-			case 0x93 /* i2s */ -> result.append("I2S");
-			case 0x94 /* lcmp */ -> result.append("LCMP");
-			case 0x95 /* fcmpl */ -> result.append("FCMPL");
-			case 0x96 /* fcmpg */ -> result.append("FCMPG");
-			case 0x97 /* dcmpl */ -> result.append("DCMPL");
-			case 0x98 /* dcmpg */ -> result.append("DCMPG");
+			case 0x5f /* swap */ -> new Swap();
+			case 0x60 /* iadd */ -> new DirectTranslation(0x6A);
+			case 0x61 /* ladd */ -> new DirectTranslation(0x7C);
+			case 0x62 /* fadd */ -> new DirectTranslation(0x92);
+			case 0x63 /* dadd */ -> new DirectTranslation(0xA0);
+			case 0x64 /* isub */ -> new DirectTranslation(0x6B);
+			case 0x65 /* lsub */ -> new DirectTranslation(0x7D);
+			case 0x66 /* fsub */ -> new DirectTranslation(0x93);
+			case 0x67 /* dsub */ -> new DirectTranslation(0xA1);
+			case 0x68 /* imul */ -> new DirectTranslation(0x6C);
+			case 0x69 /* lmul */ -> new DirectTranslation(0x7E);
+			case 0x6a /* fmul */ -> new DirectTranslation(0x94);
+			case 0x6b /* dmul */ -> new DirectTranslation(0xA2);
+			case 0x6c /* idiv */ -> new DirectTranslation(0x6D);
+			case 0x6d /* ldiv */ -> new DirectTranslation(0x7F);
+			case 0x6e /* fdiv */ -> new DirectTranslation(0x95);
+			case 0x6f /* ddiv */ -> new DirectTranslation(0xA3);
+			case 0x70 /* irem */ -> new DirectTranslation(0x6F);
+			case 0x71 /* lrem */ -> new DirectTranslation(0x81);
+			case 0x72 /* frem */ -> new FloatRem(ValueType.F32);
+			case 0x73 /* drem */ -> new FloatRem(ValueType.F64);
+			case 0x74 /* ineg */ -> new IntegerNeg(ValueType.I32);
+			case 0x75 /* lneg */ -> new IntegerNeg(ValueType.I64);
+			case 0x76 /* fneg */ -> new DirectTranslation(0x8C);
+			case 0x77 /* dneg */ -> new DirectTranslation(0x9A);
+			case 0x78 /* ishl */ -> new DirectTranslation(0x74);
+			case 0x79 /* lshl */ -> new DirectTranslation(0x86);
+			case 0x7a /* ishr */ -> new DirectTranslation(0x75);
+			case 0x7b /* lshr */ -> new DirectTranslation(0x87);
+			case 0x7c /* iushr */ -> new DirectTranslation(0x76);
+			case 0x7d /* lushr */ -> new DirectTranslation(0x88);
+			case 0x7e /* iand */ -> new DirectTranslation(0x71);
+			case 0x7f /* land */ -> new DirectTranslation(0x83);
+			case 0x80 /* ior */ -> new DirectTranslation(0x72);
+			case 0x81 /* lor */ -> new DirectTranslation(0x84);
+			case 0x82 /* ixor */ -> new DirectTranslation(0x73);
+			case 0x83 /* lxor */ -> new DirectTranslation(0x85);
+			case 0x84 /* iinc */ -> new IncrementLocal(input.readUnsignedByte(), input.readByte());
+			case 0x85 /* i2l */ -> new DirectTranslation(0xAC);
+			case 0x86 /* i2f */ -> new DirectTranslation(0xB2);
+			case 0x87 /* i2d */ -> new DirectTranslation(0xB7);
+			case 0x88 /* l2i */ -> new DirectTranslation(0xA7);
+			case 0x89 /* l2f */ -> new DirectTranslation(0xB4);
+			case 0x8a /* l2d */ -> new DirectTranslation(0xB9);
+			case 0x8b /* f2i */ -> new DirectTranslation(0xA8);
+			case 0x8c /* f2l */ -> new DirectTranslation(0xAE);
+			case 0x8d /* f2d */ -> new DirectTranslation(0xBB);
+			case 0x8e /* d2i */ -> new DirectTranslation(0xAA);
+			case 0x8f /* d2l */ -> new DirectTranslation(0xB0);
+			case 0x90 /* d2f */ -> new DirectTranslation(0xB6);
+			case 0x91 /* i2b */ -> new TrimInt(1, false);
+			case 0x92 /* i2c */ -> new TrimInt(2, true);
+			case 0x93 /* i2s */ -> new TrimInt(2, false);
+			case 0x94 /* lcmp */ -> new Compare(ValueType.I64, false); // TODO: Java uses cmp then if_<cond>,
+			case 0x95 /* fcmpl */ -> new Compare(ValueType.F32, false); // whereas WASM uses cmp_<cond> then if...
+			case 0x96 /* fcmpg */ -> new Compare(ValueType.F32, true); // We need to translate
+			case 0x97 /* dcmpl */ -> new Compare(ValueType.F64, false);
+			case 0x98 /* dcmpg */ -> new Compare(ValueType.F64, true);
 			case 0x99 /* ifeq */ -> result.append("IFEQ ").append(instructionPointer + input.readShort());
 			case 0x9a /* ifne */ -> result.append("IFNE ").append(instructionPointer + input.readShort());
 			case 0x9b /* iflt */ -> result.append("IFLT ").append(instructionPointer + input.readShort());
@@ -268,6 +267,7 @@ public interface Operation {
 			default -> result.append("UNKNOWN");
 		};
 	}
+	record DirectTranslation(int opcode) {}
 	record NoOp() implements Operation {
 		@Override
 		public void writeWasm(DataOutputStream out) throws IOException {
@@ -279,4 +279,25 @@ public interface Operation {
 	record PopLocal(int index) implements Operation {}
 	record Pop() implements Operation {}
 	record Dup(int numValues, int offset) implements Operation {}
+	record Swap() implements Operation {}
+	record FloatRem(ValueType floatType) implements Operation {
+		public FloatRem {
+			if (!ValueType.isFloatingPointType(floatType))
+				throw new RuntimeException("Invalid float type");
+		}
+	}
+	record IntegerNeg(ValueType floatType) implements Operation {
+		public IntegerNeg {
+			if (!ValueType.isIntegralType(floatType))
+				throw new RuntimeException("Invalid integer type");
+		}
+	}
+	record IncrementLocal(int index, byte shift) implements Operation {}
+	record TrimInt(int size, boolean unsigned) implements Operation {}
+	record Compare(ValueType types, boolean nanResultGreater) implements Operation {
+		public Compare {
+			if (!ValueType.isNumericType(types))
+				throw new RuntimeException("Cannot compare types");
+		}
+	}
 }

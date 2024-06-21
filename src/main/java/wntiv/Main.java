@@ -1,5 +1,7 @@
 package wntiv;
 
+import wntiv.class_parser.JarHandler;
+
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;

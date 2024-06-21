@@ -130,9 +130,18 @@ public class ClassHandler {
 		return result.toString().replaceAll("\\[[\r\n\t ]*]", "[]");
 	}
 
-	private static class ConstantPool {
+	public Map<String, IntermediaryMethod> prepareFunctions() {
+		Map<String, IntermediaryMethod> result = new HashMap<>();
+		for (MethodInfo method : methods) {
+			result.put(method.name, method.prepareFunction());
+		}
+		return result;
+	}
+
+	public static class ConstantPool {
 		private final DataInputStream data;
 		private final List<ConstantPoolItem> pool = new ArrayList<>();
+		private final List<ConstantClassInfo> dependencies = new ArrayList<>();
 
 		ConstantPool(DataInputStream in, int len) throws IOException {
 			data = in;
@@ -153,6 +162,13 @@ public class ClassHandler {
 
 		public void add(ConstantPoolItem item) {
 			pool.add(item);
+		}
+		public void add(ConstantClassInfo item) {
+			dependencies.add(item);
+			pool.add(item);
+		}
+		public List<ConstantClassInfo> getDependencies() {
+			return dependencies;
 		}
 
 		@Override
@@ -1288,6 +1304,11 @@ public class ClassHandler {
 			result.append(attributes.toString().replace("\n", "\n\t"));
 			return result.toString();
 		}
+
+		public IntermediaryMethod prepareFunction() {
+			IntermediaryMethod result = new IntermediaryMethod(this);
+			return result;
+		}
 	}
 
 	static class FieldInfo {
@@ -1382,11 +1403,20 @@ public class ClassHandler {
 		}
 
 		@Override
+		public boolean equals(Object obj) {
+			if(!(obj instanceof ConstantClassInfo other)) return false;
+			return name.equals(other.name);
+		}
+		@Override
+		public int hashCode() {
+			return name.hashCode();
+		}
+		@Override
 		public String toString() {
 			return "Class<" + name + ">";
 		}
 	}
-	static class ConstantMemberRefInfo extends ConstantPoolItem {
+	public static class ConstantMemberRefInfo extends ConstantPoolItem {
 		final ConstantClassInfo cls;
 		final ConstantNameAndTypeInfo signature;
 
@@ -1407,28 +1437,28 @@ public class ClassHandler {
 			return cls.toString() + "::" + signature.toString();
 		}
 	}
-	static class ConstantFieldRefInfo extends ConstantMemberRefInfo {
+	public static class ConstantFieldRefInfo extends ConstantMemberRefInfo {
 		static final byte TYPE = 9;
 
 		protected ConstantFieldRefInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
 			super(in, constantPool);
 		}
 	}
-	static class ConstantMethodRefInfo extends ConstantMemberRefInfo {
+	public static class ConstantMethodRefInfo extends ConstantMemberRefInfo {
 		static final byte TYPE = 10;
 
 		protected ConstantMethodRefInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
 			super(in, constantPool);
 		}
 	}
-	static class ConstantInterfaceMethodRefInfo extends ConstantMemberRefInfo {
+	public static class ConstantInterfaceMethodRefInfo extends ConstantMemberRefInfo {
 		static final byte TYPE = 11;
 
 		protected ConstantInterfaceMethodRefInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
 			super(in, constantPool);
 		}
 	}
-	static class ConstantStringInfo extends ConstantPoolItem {
+	public static class ConstantStringInfo extends ConstantPoolItem {
 		static final byte TYPE = 8;
 		final String value;
 
@@ -1444,7 +1474,7 @@ public class ClassHandler {
 			return "String(\"" + value + "\")";
 		}
 	}
-	static class ConstantIntegerInfo extends ConstantPoolItem {
+	public static class ConstantIntegerInfo extends ConstantPoolItem {
 		static final byte TYPE = 3;
 		final int value;
 
@@ -1458,7 +1488,7 @@ public class ClassHandler {
 			return Integer.toString(value);
 		}
 	}
-	static class ConstantFloatInfo extends ConstantPoolItem {
+	public static class ConstantFloatInfo extends ConstantPoolItem {
 		static final byte TYPE = 4;
 		final float value;
 
@@ -1472,7 +1502,7 @@ public class ClassHandler {
 			return Float.toString(value);
 		}
 	}
-	static class ConstantLongInfo extends ConstantPoolItem {
+	public static class ConstantLongInfo extends ConstantPoolItem {
 		static final byte TYPE = 5;
 		final long value;
 
@@ -1487,7 +1517,7 @@ public class ClassHandler {
 			return Long.toString(value);
 		}
 	}
-	static class ConstantDoubleInfo extends ConstantPoolItem {
+	public static class ConstantDoubleInfo extends ConstantPoolItem {
 		static final byte TYPE = 6;
 		final double value;
 
@@ -1502,7 +1532,7 @@ public class ClassHandler {
 			return Double.toString(value);
 		}
 	}
-	static class ConstantNameAndTypeInfo extends ConstantPoolItem {
+	public static class ConstantNameAndTypeInfo extends ConstantPoolItem {
 		static final byte TYPE = 12;
 		final String name;
 		final String descriptor;
@@ -1524,7 +1554,7 @@ public class ClassHandler {
 			return name + ": " + descriptor;
 		}
 	}
-	static class ConstantUtf8Info extends ConstantPoolItem {
+	public static class ConstantUtf8Info extends ConstantPoolItem {
 		static final byte TYPE = 1;
 		final @Unsigned String value;
 
@@ -1541,7 +1571,7 @@ public class ClassHandler {
 			return '"' + value + '"';
 		}
 	}
-	static class ConstantMethodHandleInfo extends ConstantPoolItem {
+	public static class ConstantMethodHandleInfo extends ConstantPoolItem {
 		static final byte REF_getField = (byte)1; // getfield C.f:T
 		static final byte REF_getStatic = (byte)2; // getstatic C.f:T
 		static final byte REF_putField = (byte)3; // putfield C.f:T
@@ -1587,7 +1617,7 @@ public class ClassHandler {
 			} + ")" + reference.toString();
 		}
 	}
-	static class ConstantMethodTypeInfo extends ConstantPoolItem {
+	public static class ConstantMethodTypeInfo extends ConstantPoolItem {
 		static final byte TYPE = 16;
 		final String descriptor;
 
@@ -1603,7 +1633,7 @@ public class ClassHandler {
 			return descriptor;
 		}
 	}
-	static class ConstantInvokeDynamicInfo extends ConstantPoolItem {
+	public static class ConstantInvokeDynamicInfo extends ConstantPoolItem {
 		static final byte TYPE = 18;
 		final @Unsigned short bootstrap_method_attr_index;
 		final ConstantNameAndTypeInfo signature;

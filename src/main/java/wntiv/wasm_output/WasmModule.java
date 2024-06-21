@@ -23,13 +23,8 @@ public class WasmModule {
 	private final DataSection data = new DataSection();
 	private final CodeSection code = new CodeSection();
 
-	public IndexType addFunction(FunctionFactory functionSpec) {
-		WritableCollection<CodeSection.Locals> locals = new WritableCollection<>();
-		for (var entry : functionSpec.getLocals().entrySet()) {
-			locals.elements.add(new CodeSection.Locals(entry.getValue(), entry.getKey()));
-		}
-		Expression expr = new Expression(functionSpec.getCode());
-		return new IndexType(code.add(new CodeSection.Function(locals, expr)));
+	public IndexType addFunction(WasmFunction functionSpec) {
+		return new IndexType(code.add(functionSpec));
 	}
 //	public void export(IndexType function) ...?
 
@@ -367,28 +362,10 @@ public class WasmModule {
 			}
 		}
 	}
-	static class CodeSection extends WritableCollection<CodeSection.Function> implements Section {
+	static class CodeSection extends WritableCollection<WasmFunction> implements Section {
 		@Override
 		public byte sectionType() {
 			return CODE_SECTION;
-		}
-		record Locals(int count, ValueType type)  implements Writable {
-			@Override
-			public void write(DataOutputStream target) throws IOException {
-				Util.writeVarUInt(target, count);
-				type.write(target);
-			}
-		}
-		record Function(WritableCollection<Locals> locals, Expression code) implements Writable {
-			@Override
-			public void write(DataOutputStream target) throws IOException {
-				ByteArrayOutputStream buf = new ByteArrayOutputStream();
-				DataOutputStream bufView = new DataOutputStream(buf);
-				locals.write(bufView);
-				code.write(bufView);
-				Util.writeVarUInt(target, buf.size()); // Prefix length
-				buf.writeTo(target);
-			}
 		}
 	}
 }

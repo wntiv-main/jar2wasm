@@ -31,6 +31,8 @@ public class JarHandler {
 				// Java class
 				ClassHandler handler = new ClassHandler(new DataInputStream(input));
 				classes.put(handler.this_class, handler);
+				System.out.println(handler);
+				System.in.read();
 			} else {
 				assetsOut.putNextEntry(entry);
 				input.transferTo(assetsOut);

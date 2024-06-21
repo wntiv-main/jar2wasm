@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.util.function.IntSupplier;
 
 public interface Operation {
+	String[] ARRAY_TYPES = new String[]{"BOOLEAN", "CHAR", "FLOAT", "DOUBLE", "BYTE", "SHORT", "INT", "LONG"};
 	enum Type {
 		INT,
 		LONG,
@@ -19,9 +20,11 @@ public interface Operation {
 		CHAR,
 		SHORT;
 	}
-	void writeWasm(DataOutputStream out, IntermediaryMethod context) throws IOException;
+	default void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {}
 	static Operation readFromStream(DataInputStream input, IntSupplier alignment, ClassHandler.ConstantPool pool) throws IOException {
 		int opcode = input.readUnsignedByte();
+//		StringBuilder result = new StringBuilder(); // TODO: TEMP
+//		int instructionPointer = 0;
 		return switch (opcode) {
 			case 0x00 /* nop */ -> new DirectTranslation(0x01);
 			case 0x01 /* aconst_null */ -> new PushConst(ValueType.EXTERNAL_REF, null); // TODO: ??
@@ -45,21 +48,21 @@ public interface Operation {
 				ClassHandler.ConstantPoolItem constValue = pool.get(opcode == 0x12 ? input.readUnsignedByte()
 				                                                                   : input.readUnsignedShort());
 				if (constValue instanceof ClassHandler.ConstantIntegerInfo intValue)
-					new PushConst(ValueType.I32, intValue.value);
+					yield new PushConst(ValueType.I32, intValue.value);
 				else if (constValue instanceof ClassHandler.ConstantFloatInfo floatValue)
-					new PushConst(ValueType.F32, floatValue.value);
+					yield new PushConst(ValueType.F32, floatValue.value);
 				else if (constValue instanceof ClassHandler.ConstantStringInfo stringValue)
-					new PushConst(ValueType.EXTERNAL_REF, stringValue.value); // TODO: Make value in data section??
+					yield new PushConst(ValueType.EXTERNAL_REF, stringValue.value); // TODO: Make value in data section??
 				else if (constValue instanceof ClassHandler.ConstantClassInfo object)
-					new PushConst(ValueType.EXTERNAL_REF, object);
+					yield new PushConst(ValueType.EXTERNAL_REF, object);
 				else throw new RuntimeException("Unexpected const value");
 			}
 			case 0x14 /* ldc2_w */ -> {
 				ClassHandler.ConstantPoolItem constValue = pool.get(input.readUnsignedShort());
 				if (constValue instanceof ClassHandler.ConstantLongInfo longValue)
-					new PushConst(ValueType.I64, longValue.value);
+					yield new PushConst(ValueType.I64, longValue.value);
 				else if (constValue instanceof ClassHandler.ConstantDoubleInfo doubleValue)
-					new PushConst(ValueType.F64, doubleValue.value);
+					yield new PushConst(ValueType.F64, doubleValue.value);
 				else throw new RuntimeException("Unexpected const value");
 			}
 			case 0x15 /* iload */ -> new PushLocal(input.readUnsignedByte());
@@ -90,14 +93,14 @@ public interface Operation {
 			case 0x43, 0x44, 0x45, 0x46 /* fstore_<n> */ -> new PopLocal(opcode - 0x43);
 			case 0x47, 0x48, 0x49, 0x4a /* dstore_<n> */ -> new PopLocal(opcode - 0x47);
 			case 0x4b, 0x4c, 0x4d, 0x4e /* astore_<n> */ -> new PopLocal(opcode - 0x4b);
-			case 0x4f /* iastore */ -> result.append("IASTORE");
-			case 0x50 /* lastore */ -> result.append("LASTORE");
-			case 0x51 /* fastore */ -> result.append("FASTORE");
-			case 0x52 /* dastore */ -> result.append("DASTORE");
-			case 0x53 /* aastore */ -> result.append("AASTORE");
-			case 0x54 /* bastore */ -> result.append("BASTORE");
-			case 0x55 /* castore */ -> result.append("CASTORE");
-			case 0x56 /* sastore */ -> result.append("SASTORE");
+			case 0x4f /* iastore */ -> new PopArray(Type.INT);
+			case 0x50 /* lastore */ -> new PopArray(Type.LONG);
+			case 0x51 /* fastore */ -> new PopArray(Type.FLOAT);
+			case 0x52 /* dastore */ -> new PopArray(Type.DOUBLE);
+			case 0x53 /* aastore */ -> new PopArray(Type.ARRAY);
+			case 0x54 /* bastore */ -> new PopArray(Type.BYTE);
+			case 0x55 /* castore */ -> new PopArray(Type.CHAR);
+			case 0x56 /* sastore */ -> new PopArray(Type.SHORT);
 			case 0x57 /* pop */ -> new DirectTranslation(0x1A);
 			case 0x58 /* pop2 */ -> new DirectTranslation(0x1A); // TODO: maybe drops two values (depends on type)
 			case 0x59 /* dup */ -> new Dup(1, -1);
@@ -184,7 +187,7 @@ public interface Operation {
 			case 0xaa /* tableswitch */ -> {
 				result.append("TABLESWITCH {");
 				// Magic ;) dont question it
-				input.skipNBytes((-iter_base.getPos()) & 0b11);
+				input.skipNBytes((-alignment.getAsInt()) & 0b11);
 				result.append("\n\tdefault: ");
 				result.append(input.readInt());
 				int low = input.readInt();
@@ -201,11 +204,12 @@ public interface Operation {
 					result.append(instructionPointer + input.readInt());
 				}
 				result.append("\n}");
+				yield null;
 			}
 			case 0xab /* lookupswitch */ -> {
 				result.append("LOOKUPSWITCH {");
 				// Magic ;) dont question it
-				input.skipNBytes((-iter_base.getPos()) & 0b11);
+				input.skipNBytes((-alignment.getAsInt()) & 0b11);
 				result.append("\n\tdefault: ");
 				result.append(input.readInt());
 				int numPairs = input.readInt();
@@ -218,6 +222,7 @@ public interface Operation {
 					result.append(input.readInt());
 				}
 				result.append("\n}");
+				yield null;
 			}
 			case 0xac /* ireturn */ -> result.append("IRETURN");
 			case 0xad /* lreturn */ -> result.append("LRETURN");
@@ -225,21 +230,35 @@ public interface Operation {
 			case 0xaf /* dreturn */ -> result.append("DRETURN");
 			case 0xb0 /* areturn */ -> result.append("ARETURN");
 			case 0xb1 /* return */ -> new DirectTranslation(0x0F);
-			case 0xb2 /* getstatic */ -> result.append("GETSTATIC ").append(pool.get(input.readUnsignedShort()));
-			case 0xb3 /* putstatic */ -> result.append("PUT_STATIC ").append(pool.get(input.readUnsignedShort()));
+			case 0xb2 /* getstatic */ -> {
+				if (!(pool.get(input.readUnsignedShort()) instanceof ClassHandler.ConstantFieldRefInfo field))
+					throw new RuntimeException("Not a field");
+				yield new GetStatic(field);
+			}
+			case 0xb3 /* putstatic */ -> {
+				if (!(pool.get(input.readUnsignedShort()) instanceof ClassHandler.ConstantFieldRefInfo field))
+					throw new RuntimeException("Not a field");
+				yield new PutStatic(field);
+			}
 			case 0xb4 /* getfield */ -> result.append("GETFIELD ").append(pool.get(input.readUnsignedShort()));
 			case 0xb5 /* putfield */ -> result.append("PUT_FIELD ").append(pool.get(input.readUnsignedShort()));
 			case 0xb6 /* invokevirtual */ -> result.append("INVOKE_VIRTUAL ").append(pool.get(input.readUnsignedShort()));
 			case 0xb7 /* invokespecial */ -> result.append("INVOKE_SPECIAL ").append(pool.get(input.readUnsignedShort()));
-			case 0xb8 /* invokestatic */ -> result.append("INVOKE_STATIC ").append(pool.get(input.readUnsignedShort()));
+			case 0xb8 /* invokestatic */ -> {
+				if (!(pool.get(input.readUnsignedShort()) instanceof ClassHandler.ConstantMethodRefInfo method))
+					throw new RuntimeException("Not a method");
+				yield new InvokeMethod(method);
+			}
 			case 0xb9 /* invokeinterface */ -> {
 				result.append("INVOKE_INTERFACE ").append(pool.get(input.readUnsignedShort()))
 						.append(" ").append(input.readUnsignedByte());
 				assert input.readByte() == 0;
+				yield null;
 			}
 			case 0xba /* invokedynamic */ -> {
 				result.append("INVOKE_DYNAMIC ").append(pool.get(input.readUnsignedShort()));
 				assert input.readShort() == 0;
+				yield null;
 			}
 			case 0xbb /* new */ -> result.append("NEW ").append(pool.get(input.readUnsignedShort()));
 			case 0xbc /* newarray */ -> result.append("NEW_ARRAY ").append(ARRAY_TYPES[input.readByte() - 4]);
@@ -252,13 +271,13 @@ public interface Operation {
 			case 0xc3 /* monitorexit */ -> result.append("MONITOREXIT");
 			case 0xc5 /* multianewarray */ -> result.append("MULTIANEWARRAY ").append(pool.get(input.readUnsignedShort()))
 					.append(" ").append(input.readUnsignedByte());
-			case 0xc6 /* ifnull */ -> result.append("IFNULL ").append(instructionPointer + input.readShort());
-			case 0xc7 /* ifnonnull */ -> result.append("IFNONNULL ").append(instructionPointer + input.readShort());
+			case 0xc6 /* ifnull */ -> new NullCheck(false, input.readShort());
+			case 0xc7 /* ifnonnull */ -> new NullCheck(true, input.readShort());
 			case 0xc8 /* goto_w */ -> result.append("GOTO_W ").append(instructionPointer + input.readInt());
 			case 0xc9 /* jsr_w */ -> result.append("JSR_W ").append(instructionPointer + input.readInt());
 			case 0xc4 /* wide */ -> {
 				result.append("WIDE ");
-				switch (opcode = input.readUnsignedByte()) {
+				yield switch (opcode = input.readUnsignedByte()) {
 					case 0x15 /* iload */ -> new PushLocal(input.readUnsignedShort());
 					case 0x16 /* lload */ -> new PushLocal(input.readUnsignedShort());
 					case 0x17 /* fload */ -> new PushLocal(input.readUnsignedShort());
@@ -272,20 +291,20 @@ public interface Operation {
 					case 0x84 /* iinc */ -> new IncrementLocal(input.readUnsignedShort(), input.readShort());
 					case 0xa9 /* ret */ -> result.append("RET ").append(input.readUnsignedShort());
 					default -> result.append("UNKNOWN");
-				}
+				};
 			}
 			default -> result.append("UNKNOWN");
 		};
 	}
 	record DirectTranslation(int opcode) implements Operation {
 		@Override
-		public void writeWasm(DataOutputStream out, IntermediaryMethod context) throws IOException {
+		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
 			out.writeByte(opcode);
 		}
 	}
 	record PushConst(ValueType type, Object value) implements Operation {
 		@Override
-		public void writeWasm(DataOutputStream out, IntermediaryMethod context) throws IOException {
+		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
 			switch (type) {
 				case I32 -> { out.writeByte(0x41); Util.writeVarInt(out, (int) value); }
 				case I64 -> { out.writeByte(0x42); Util.writeVarInt(out, (long) value); }
@@ -297,7 +316,7 @@ public interface Operation {
 	}
 	record PushLocal(int index) implements Operation {
 		@Override
-		public void writeWasm(DataOutputStream out, IntermediaryMethod context) throws IOException {
+		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
 			out.writeByte(0x20);
 			Util.writeVarUInt(out, index); // TODO: remapping from java locals to wasm locals
 		}
@@ -305,7 +324,7 @@ public interface Operation {
 	record PushArray(Type type) implements Operation {}
 	record PopLocal(int index) implements Operation {
 		@Override
-		public void writeWasm(DataOutputStream out, IntermediaryMethod context) throws IOException {
+		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
 			out.writeByte(0x21);
 			Util.writeVarUInt(out, index); // TODO: remapping from java locals to wasm locals
 		}
@@ -326,7 +345,7 @@ public interface Operation {
 		}
 
 		@Override
-		public void writeWasm(DataOutputStream out, IntermediaryMethod context) throws IOException {
+		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
 			// TODO: better way than multiply??
 			out.writeByte(intType == ValueType.I32 ? 0x41 :
 			           /* intType == ValueType.I64 ? */ 0x42); // Load const int
@@ -337,7 +356,7 @@ public interface Operation {
 	}
 	record IncrementLocal(int index, short shift) implements Operation {
 		@Override
-		public void writeWasm(DataOutputStream out, IntermediaryMethod context) throws IOException {
+		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
 			out.writeByte(0x20); // local.get
 			Util.writeVarUInt(out, index); // TODO: translate locals
 			out.writeByte(0x41); // i32.const
@@ -349,7 +368,7 @@ public interface Operation {
 	}
 	record TrimInt(int size, boolean unsigned) implements Operation {
 		@Override
-		public void writeWasm(DataOutputStream out, IntermediaryMethod context) throws IOException {
+		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
 			out.writeByte(0x41); // i32.const
 			int mask = 0;
 			for (int i = 0; i < size; i++) {
@@ -365,6 +384,44 @@ public interface Operation {
 		public Compare {
 			if (!ValueType.isNumericType(types))
 				throw new RuntimeException("Cannot compare types");
+		}
+	}
+	record InvokeMethod(ClassHandler.ConstantMethodRefInfo method) implements Operation {
+		@Override
+		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
+			out.writeByte(0x10); // call
+			Util.writeVarUInt(out, context.getFunctionIndex(method));
+		}
+	}
+	record PutStatic(ClassHandler.ConstantFieldRefInfo field) implements Operation {
+		@Override
+		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
+			out.writeByte(0x24); // global.set
+			Util.writeVarUInt(out, context.getGlobalIndex(field));
+		}
+	}
+	record GetStatic(ClassHandler.ConstantFieldRefInfo field) implements Operation {
+		@Override
+		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
+			out.writeByte(0x23); // global.set
+			Util.writeVarUInt(out, context.getGlobalIndex(field));
+		}
+	}
+	record NullCheck(boolean invert, short jumpTarget) implements Operation {
+		@Override
+		public void writeWasm(DataOutputStream out, ModuleContext context) throws IOException {
+			out.writeByte(0xD1); // ref.is_null
+			if (invert) {
+				out.writeByte(0x41); // i32.const
+				Util.writeVarInt(out, 1);
+				out.writeByte(0x73); // i32.xor
+			}
+			out.writeByte(0x04); // if
+			// TODO: inline bytes from jump_target
+			out.writeByte(0x05); // else
+			// TODO: conditional magic stuff required
+			out.writeByte(0x0B); // endif
+			// maybe somehow generalize all if statements
 		}
 	}
 }

@@ -14,10 +14,12 @@ import java.util.Map;
 
 public class IntermediaryMethod implements WasmFunction {
 	private final ClassHandler.MethodInfo info;
+	private final ModuleContext moduleCtx;
 	private List<Operation> code = new ArrayList<>();
 
-	public IntermediaryMethod(ClassHandler.MethodInfo info) {
+	public IntermediaryMethod(ClassHandler.MethodInfo info, ModuleContext moduleContext) {
 		this.info = info;
+		moduleCtx = moduleContext;
 	}
 
 	@Override
@@ -26,7 +28,7 @@ public class IntermediaryMethod implements WasmFunction {
 			ByteArrayOutputStream codeBinary = new ByteArrayOutputStream();
 			DataOutputStream codeView = new DataOutputStream(codeBinary);
 			for (Operation op : code) {
-				op.writeWasm(codeView);
+				op.writeWasm(codeView, moduleCtx);
 			}
 			return new Expression(codeBinary.toByteArray());
 		} catch (IOException e) {

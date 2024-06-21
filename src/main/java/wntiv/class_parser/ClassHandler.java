@@ -1306,7 +1306,7 @@ public class ClassHandler {
 		}
 
 		public IntermediaryMethod prepareFunction() {
-			IntermediaryMethod result = new IntermediaryMethod(this);
+			IntermediaryMethod result = new IntermediaryMethod(this, moduleCtx);
 			return result;
 		}
 	}

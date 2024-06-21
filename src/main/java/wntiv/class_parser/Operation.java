@@ -1,5 +1,6 @@
 package wntiv.class_parser;
 
+import wntiv.wasm_output.Util;
 import wntiv.wasm_output.types.ValueType;
 
 import java.io.DataInputStream;
@@ -8,11 +9,21 @@ import java.io.IOException;
 import java.util.function.IntSupplier;
 
 public interface Operation {
-//	void writeWasm(DataOutputStream out) throws IOException;
+	enum Type {
+		INT,
+		LONG,
+		FLOAT,
+		DOUBLE,
+		ARRAY,
+		BYTE,
+		CHAR,
+		SHORT;
+	}
+	void writeWasm(DataOutputStream out, IntermediaryMethod context) throws IOException;
 	static Operation readFromStream(DataInputStream input, IntSupplier alignment, ClassHandler.ConstantPool pool) throws IOException {
 		int opcode = input.readUnsignedByte();
 		return switch (opcode) {
-			case 0x00 /* nop */ -> new NoOp();
+			case 0x00 /* nop */ -> new DirectTranslation(0x01);
 			case 0x01 /* aconst_null */ -> new PushConst(ValueType.EXTERNAL_REF, null); // TODO: ??
 			case 0x02 /* iconst_m1 */ -> new PushConst(ValueType.I32, -1);
 			case 0x03 /* iconst_0 */ -> new PushConst(ValueType.I32, 0);
@@ -61,14 +72,14 @@ public interface Operation {
 			case 0x22, 0x23, 0x24, 0x25 /* fload_<n> */ -> new PushLocal(opcode - 0x22);
 			case 0x26, 0x27, 0x28, 0x29 /* dload_<n> */ -> new PushLocal(opcode - 0x26);
 			case 0x2a, 0x2b, 0x2c, 0x2d /* aload_<n> */ -> new PushLocal(opcode - 0x2a);
-			case 0x2e /* iaload */ -> result.append("IALOAD");
-			case 0x2f /* laload */ -> result.append("LALOAD");
-			case 0x30 /* faload */ -> result.append("FALOAD");
-			case 0x31 /* daload */ -> result.append("DALOAD");
-			case 0x32 /* aaload */ -> result.append("AALOAD");
-			case 0x33 /* baload */ -> result.append("BALOAD");
-			case 0x34 /* caload */ -> result.append("CALOAD");
-			case 0x35 /* saload */ -> result.append("SALOAD");
+			case 0x2e /* iaload */ -> new PushArray(Type.INT);
+			case 0x2f /* laload */ -> new PushArray(Type.LONG);
+			case 0x30 /* faload */ -> new PushArray(Type.FLOAT);
+			case 0x31 /* daload */ -> new PushArray(Type.DOUBLE);
+			case 0x32 /* aaload */ -> new PushArray(Type.ARRAY);
+			case 0x33 /* baload */ -> new PushArray(Type.BYTE);
+			case 0x34 /* caload */ -> new PushArray(Type.CHAR);
+			case 0x35 /* saload */ -> new PushArray(Type.SHORT);
 			case 0x36 /* istore */ -> new PopLocal(input.readUnsignedByte());
 			case 0x37 /* lstore */ -> new PopLocal(input.readUnsignedByte());
 			case 0x38 /* fstore */ -> new PopLocal(input.readUnsignedByte());
@@ -87,8 +98,8 @@ public interface Operation {
 			case 0x54 /* bastore */ -> result.append("BASTORE");
 			case 0x55 /* castore */ -> result.append("CASTORE");
 			case 0x56 /* sastore */ -> result.append("SASTORE");
-			case 0x57 /* pop */ -> new Pop();
-			case 0x58 /* pop2 */ -> new Pop();
+			case 0x57 /* pop */ -> new DirectTranslation(0x1A);
+			case 0x58 /* pop2 */ -> new DirectTranslation(0x1A); // TODO: maybe drops two values (depends on type)
 			case 0x59 /* dup */ -> new Dup(1, -1);
 			case 0x5a /* dup_x1 */ -> new Dup(1, 1);
 			case 0x5b /* dup_x2 */ -> new Dup(1, 2);
@@ -213,7 +224,7 @@ public interface Operation {
 			case 0xae /* freturn */ -> result.append("FRETURN");
 			case 0xaf /* dreturn */ -> result.append("DRETURN");
 			case 0xb0 /* areturn */ -> result.append("ARETURN");
-			case 0xb1 /* return */ -> result.append("RETURN");
+			case 0xb1 /* return */ -> new DirectTranslation(0x0F);
 			case 0xb2 /* getstatic */ -> result.append("GETSTATIC ").append(pool.get(input.readUnsignedShort()));
 			case 0xb3 /* putstatic */ -> result.append("PUT_STATIC ").append(pool.get(input.readUnsignedShort()));
 			case 0xb4 /* getfield */ -> result.append("GETFIELD ").append(pool.get(input.readUnsignedShort()));
@@ -248,18 +259,17 @@ public interface Operation {
 			case 0xc4 /* wide */ -> {
 				result.append("WIDE ");
 				switch (opcode = input.readUnsignedByte()) {
-					case 0x15 /* iload */ -> result.append("ILOAD ").append(input.readUnsignedShort());
-					case 0x16 /* lload */ -> result.append("LLOAD ").append(input.readUnsignedShort());
-					case 0x17 /* fload */ -> result.append("FLOAD ").append(input.readUnsignedShort());
-					case 0x18 /* dload */ -> result.append("DLOAD ").append(input.readUnsignedShort());
-					case 0x19 /* aload */ -> result.append("ALOAD ").append(input.readUnsignedShort());
-					case 0x36 /* istore */ -> result.append("ISTORE ").append(input.readUnsignedShort());
-					case 0x37 /* lstore */ -> result.append("LSTORE ").append(input.readUnsignedShort());
-					case 0x38 /* fstore */ -> result.append("FSTORE ").append(input.readUnsignedShort());
-					case 0x39 /* dstore */ -> result.append("DSTORE ").append(input.readUnsignedShort());
-					case 0x3a /* astore */ -> result.append("ASTORE ").append(input.readUnsignedShort());
-					case 0x84 /* iinc */ -> result.append("IINC ").append(input.readUnsignedShort())
-							.append(" ").append(input.readShort());
+					case 0x15 /* iload */ -> new PushLocal(input.readUnsignedShort());
+					case 0x16 /* lload */ -> new PushLocal(input.readUnsignedShort());
+					case 0x17 /* fload */ -> new PushLocal(input.readUnsignedShort());
+					case 0x18 /* dload */ -> new PushLocal(input.readUnsignedShort());
+					case 0x19 /* aload */ -> new PushLocal(input.readUnsignedShort());
+					case 0x36 /* istore */ -> new PopLocal(input.readUnsignedShort());
+					case 0x37 /* lstore */ -> new PopLocal(input.readUnsignedShort());
+					case 0x38 /* fstore */ -> new PopLocal(input.readUnsignedShort());
+					case 0x39 /* dstore */ -> new PopLocal(input.readUnsignedShort());
+					case 0x3a /* astore */ -> new PopLocal(input.readUnsignedShort());
+					case 0x84 /* iinc */ -> new IncrementLocal(input.readUnsignedShort(), input.readShort());
 					case 0xa9 /* ret */ -> result.append("RET ").append(input.readUnsignedShort());
 					default -> result.append("UNKNOWN");
 				}
@@ -267,17 +277,40 @@ public interface Operation {
 			default -> result.append("UNKNOWN");
 		};
 	}
-	record DirectTranslation(int opcode) {}
-	record NoOp() implements Operation {
+	record DirectTranslation(int opcode) implements Operation {
 		@Override
-		public void writeWasm(DataOutputStream out) throws IOException {
-			out.writeByte(0x01);
+		public void writeWasm(DataOutputStream out, IntermediaryMethod context) throws IOException {
+			out.writeByte(opcode);
 		}
 	}
-	record PushConst(ValueType type, Object value) implements Operation {}
-	record PushLocal(int index) implements Operation {}
-	record PopLocal(int index) implements Operation {}
-	record Pop() implements Operation {}
+	record PushConst(ValueType type, Object value) implements Operation {
+		@Override
+		public void writeWasm(DataOutputStream out, IntermediaryMethod context) throws IOException {
+			switch (type) {
+				case I32 -> { out.writeByte(0x41); Util.writeVarInt(out, (int) value); }
+				case I64 -> { out.writeByte(0x42); Util.writeVarInt(out, (long) value); }
+				case F32 -> { out.writeByte(0x43); Util.writeFloat(out, (float) value); }
+				case F64 -> { out.writeByte(0x44); Util.writeDouble(out, (double) value); }
+				case EXTERNAL_REF -> throw new RuntimeException("Not implemented"); // TODO: how are we doing arrays??
+			}
+		}
+	}
+	record PushLocal(int index) implements Operation {
+		@Override
+		public void writeWasm(DataOutputStream out, IntermediaryMethod context) throws IOException {
+			out.writeByte(0x20);
+			Util.writeVarUInt(out, index); // TODO: remapping from java locals to wasm locals
+		}
+	}
+	record PushArray(Type type) implements Operation {}
+	record PopLocal(int index) implements Operation {
+		@Override
+		public void writeWasm(DataOutputStream out, IntermediaryMethod context) throws IOException {
+			out.writeByte(0x21);
+			Util.writeVarUInt(out, index); // TODO: remapping from java locals to wasm locals
+		}
+	}
+	record PopArray(Type type) implements Operation {}
 	record Dup(int numValues, int offset) implements Operation {}
 	record Swap() implements Operation {}
 	record FloatRem(ValueType floatType) implements Operation {
@@ -286,14 +319,48 @@ public interface Operation {
 				throw new RuntimeException("Invalid float type");
 		}
 	}
-	record IntegerNeg(ValueType floatType) implements Operation {
+	record IntegerNeg(ValueType intType) implements Operation {
 		public IntegerNeg {
-			if (!ValueType.isIntegralType(floatType))
+			if (!ValueType.isIntegralType(intType))
 				throw new RuntimeException("Invalid integer type");
 		}
+
+		@Override
+		public void writeWasm(DataOutputStream out, IntermediaryMethod context) throws IOException {
+			// TODO: better way than multiply??
+			out.writeByte(intType == ValueType.I32 ? 0x41 :
+			           /* intType == ValueType.I64 ? */ 0x42); // Load const int
+			Util.writeVarInt(out, -1);
+			out.writeByte(intType == ValueType.I32 ? 0x6C :
+					/* intType == ValueType.I64 ? */ 0x7E); // Multiply
+		}
 	}
-	record IncrementLocal(int index, byte shift) implements Operation {}
-	record TrimInt(int size, boolean unsigned) implements Operation {}
+	record IncrementLocal(int index, short shift) implements Operation {
+		@Override
+		public void writeWasm(DataOutputStream out, IntermediaryMethod context) throws IOException {
+			out.writeByte(0x20); // local.get
+			Util.writeVarUInt(out, index); // TODO: translate locals
+			out.writeByte(0x41); // i32.const
+			Util.writeVarInt(out, shift);
+			out.writeByte(0x6A); // i32.add
+			out.writeByte(0x21); // local.set
+			Util.writeVarUInt(out, index); // TODO: translate locals
+		}
+	}
+	record TrimInt(int size, boolean unsigned) implements Operation {
+		@Override
+		public void writeWasm(DataOutputStream out, IntermediaryMethod context) throws IOException {
+			out.writeByte(0x41); // i32.const
+			int mask = 0;
+			for (int i = 0; i < size; i++) {
+				mask <<= 8;
+				mask |= 0xFF;
+			}
+			Util.writeVarInt(out, mask);
+			out.writeByte(0x71); // i32.and
+			if (!unsigned) out.writeByte(size == 1 ? 0xC0 : 0xC1); // i32.extend<size>_s
+		}
+	}
 	record Compare(ValueType types, boolean nanResultGreater) implements Operation {
 		public Compare {
 			if (!ValueType.isNumericType(types))

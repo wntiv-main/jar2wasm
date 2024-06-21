@@ -5,6 +5,9 @@ import wntiv.wasm_output.WasmFunction;
 import wntiv.wasm_output.types.ValueType;
 
 import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -19,11 +22,16 @@ public class IntermediaryMethod implements WasmFunction {
 
 	@Override
 	public Expression getCode() {
-		ByteArrayOutputStream codeBinary = new ByteArrayOutputStream();
-		for (Operation op : code) {
-			op.writeWasm(codeBinary);
+		try {
+			ByteArrayOutputStream codeBinary = new ByteArrayOutputStream();
+			DataOutputStream codeView = new DataOutputStream(codeBinary);
+			for (Operation op : code) {
+				op.writeWasm(codeView);
+			}
+			return new Expression(codeBinary.toByteArray());
+		} catch (IOException e) {
+			throw new UncheckedIOException(e); // :)
 		}
-		return new Expression(codeBinary.toByteArray());
 	}
 
 	@Override

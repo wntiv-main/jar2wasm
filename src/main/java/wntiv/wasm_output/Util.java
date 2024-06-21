@@ -19,6 +19,12 @@ public class Util {
 			to.writeByte((int) (value & 0x7F) | ((value >>>= 7) != 0 ? 0x80 : 0));
 		} while (value != 0);
 	}
+	public static void writeFloat(DataOutputStream to, float value) throws IOException {
+		to.writeInt(Integer.reverseBytes(Float.floatToRawIntBits(value)));
+	}
+	public static void writeDouble(DataOutputStream to, double value) throws IOException {
+		to.writeLong(Long.reverseBytes(Double.doubleToRawLongBits(value)));
+	}
 	public static void writeName(DataOutputStream to, String value) throws IOException {
 		// https://webassembly.github.io/spec/core/binary/values.html#binary-name
 		writeVarUInt(to, value.length());

@@ -61,6 +61,33 @@ public class WasmModule {
 			sectionData.writeTo(target);
 		}
 	}
+
+	public int createTable(int size, ValueType type) {
+		return tables.add(new TableType(new Limits(size, size), type));
+	}
+
+	public void initTable(int index, int[] values) {
+		WritableCollection<Expression> initExprs = new WritableCollection<>();
+		try {
+			for (int value : values) {
+				ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+				DataOutputStream dataView = new DataOutputStream(bytes);
+				dataView.writeByte(0x41); // i32.const
+				Util.writeVarInt(dataView, value);
+				initExprs.add(new Expression(bytes.toByteArray()));
+				dataView.close();
+			}
+		} catch (IOException e) {
+			throw new RuntimeException(e);
+		}
+		elements.add(ElementSection.ElementSegment.active(
+			new IndexType(index),
+			new Expression(new byte[]{0x41, 0x00}), // i32.const 0
+			ValueType.I32,
+			initExprs
+		));
+	}
+
 	// https://webassembly.github.io/spec/core/binary/modules.html
 	interface Section extends Writable {
 		@Unsigned byte CUSTOM_SECTION = 0;
@@ -253,13 +280,15 @@ public class WasmModule {
 			public final @Nullable Expression tableOffset;
 			// reftype | elementkind
 			public final byte type;
-			// Union[WritableCollection<IndexType> | Expression]
+			public final boolean usingInitFunctions;
+			// Union[WritableCollection<IndexType> | WritableCollection<Expression>]
 			public final Writable initializer;
 
-			private ElementSegment(IndexType tableIndex, @Nullable Expression tableOffset, byte type, Writable initializer) {
+			private ElementSegment(IndexType tableIndex, @Nullable Expression tableOffset, byte type, boolean usingInitFunctions, Writable initializer) {
 				this.tableIndex = tableIndex;
 				this.tableOffset = tableOffset;
 				this.type = type;
+				this.usingInitFunctions = usingInitFunctions;
 				this.initializer = initializer;
 			}
 
@@ -267,7 +296,7 @@ public class WasmModule {
 			public void write(DataOutputStream target) throws IOException {
 				boolean passive_declarative = tableOffset == null;
 				boolean declarative_table_offset = tableIndex.index() != 0;
-				boolean expressions = initializer instanceof Expression;
+				boolean expressions = !usingInitFunctions;
 				target.writeByte((passive_declarative ? 0b001 : 0)
 						| (declarative_table_offset ? 0b010 : 0)
 						| (expressions ? 0b100 : 0));
@@ -290,31 +319,31 @@ public class WasmModule {
 			}
 
 			public static ElementSegment passive(byte type, WritableCollection<IndexType> initFunctions) {
-				return new ElementSegment(new IndexType(0), null, type, initFunctions);
+				return new ElementSegment(new IndexType(0), null, type, true, initFunctions);
 			}
 			public static ElementSegment passive(ValueType refType, Expression initializer) {
 				assert ValueType.isReferenceType(refType);
-				return new ElementSegment(new IndexType(0), null, refType.asByte(), initializer);
+				return new ElementSegment(new IndexType(0), null, refType.asByte(), false, initializer);
 			}
 			public static ElementSegment declarative(byte elementKind, WritableCollection<IndexType> initFunctions) {
-				return new ElementSegment(new IndexType(1), null, elementKind, initFunctions);
+				return new ElementSegment(new IndexType(1), null, elementKind, true, initFunctions);
 			}
-			public static ElementSegment declarative(ValueType refType, Expression initializer) {
+			public static ElementSegment declarative(ValueType refType, WritableCollection<Expression> initializer) {
 				assert ValueType.isReferenceType(refType);
-				return new ElementSegment(new IndexType(1), null, refType.asByte(), initializer);
+				return new ElementSegment(new IndexType(1), null, refType.asByte(), false, initializer);
 			}
-			public static ElementSegment active(Expression tableOffset, WritableCollection<IndexType> initFunctions) {
-				return new ElementSegment(new IndexType(0), tableOffset, (byte) 0x00, initFunctions);
+			public static ElementSegment active_init_function(Expression tableOffset, WritableCollection<IndexType> initFunctions) {
+				return new ElementSegment(new IndexType(0), tableOffset, (byte) 0x00, true, initFunctions);
 			}
-			public static ElementSegment active(Expression tableOffset, Expression initializer) {
-				return new ElementSegment(new IndexType(0), tableOffset, ValueType.FUNCTION_REF.asByte(), initializer);
+			public static ElementSegment active(Expression tableOffset, WritableCollection<Expression> initializer) {
+				return new ElementSegment(new IndexType(0), tableOffset, ValueType.FUNCTION_REF.asByte(), false, initializer);
 			}
 			public static ElementSegment active(IndexType tableIndex, Expression tableOffset, byte elementKind, WritableCollection<IndexType> initFunctions) {
-				return new ElementSegment(tableIndex, tableOffset, elementKind, initFunctions);
+				return new ElementSegment(tableIndex, tableOffset, elementKind, true, initFunctions);
 			}
-			public static ElementSegment active(IndexType tableIndex, Expression tableOffset, ValueType refType, Expression initializer) {
+			public static ElementSegment active(IndexType tableIndex, Expression tableOffset, ValueType refType, WritableCollection<Expression> initializer) {
 				assert ValueType.isReferenceType(refType);
-				return new ElementSegment(tableIndex, tableOffset, refType.asByte(), initializer);
+				return new ElementSegment(tableIndex, tableOffset, refType.asByte(), false, initializer);
 			}
 		}
 	}

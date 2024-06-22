@@ -1,7 +1,9 @@
 package wntiv.class_parser;
 
+import jdk.jfr.Unsigned;
 import wntiv.Pair;
 import wntiv.wasm_output.Util;
+import wntiv.wasm_output.WasmModule;
 import wntiv.wasm_output.types.ValueType;
 
 import java.io.DataInputStream;
@@ -24,7 +26,7 @@ public interface Operation {
 		CHAR,
 		SHORT;
 	}
-	default void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {}
+	default void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {}
 	static Operation readFromStream(IntermediaryMethod method, DataInputStream input, IntSupplier methodIndex, ClassHandler.ConstantPool pool) throws IOException {
 		int opcode = input.readUnsignedByte();
 //		StringBuilder result = new StringBuilder(); // TODO: TEMP
@@ -202,22 +204,15 @@ public interface Operation {
 				yield new JumpTable(defaultValue, low, mappings);
 			}
 			case 0xab /* lookupswitch */ -> {
-				result.append("LOOKUPSWITCH {");
 				// Magic ;) dont question it
 				input.skipNBytes((-methodIndex.getAsInt()) & 0b11);
-				result.append("\n\tdefault: ");
-				result.append(input.readInt());
+				int defaultValue = input.readInt();
 				int numPairs = input.readInt();
+				Map<Integer, Integer> mapping = new HashMap<>();
 				while (numPairs-- > 0) {
-					result.append(",\n\tcase 0x");
-					String hexString = Integer.toUnsignedString(input.readInt(), 16);
-					while (hexString.length() < 2 * Integer.BYTES) hexString = '0' + hexString;
-					result.append(hexString);
-					result.append(": ");
-					result.append(input.readInt());
+					mapping.put(input.readInt(), input.readInt());
 				}
-				result.append("\n}");
-				yield null;
+				yield new LookupTable(mapping, defaultValue);
 			}
 			case 0xac /* ireturn */ -> throw new RuntimeException("IRETURN");
 			case 0xad /* lreturn */ -> throw new RuntimeException("LRETURN");
@@ -290,13 +285,13 @@ public interface Operation {
 	}
 	record DirectTranslation(int opcode) implements Operation {
 		@Override
-		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
 			out.writeByte(opcode);
 		}
 	}
 	record PushConst(ValueType type, Object value) implements Operation {
 		@Override
-		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
 			switch (type) {
 				case I32 -> { out.writeByte(0x41); Util.writeVarInt(out, (int) value); }
 				case I64 -> { out.writeByte(0x42); Util.writeVarInt(out, (long) value); }
@@ -308,7 +303,7 @@ public interface Operation {
 	}
 	record PushLocal(int index) implements Operation {
 		@Override
-		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
 			out.writeByte(0x20);
 			Util.writeVarUInt(out, this.index); // TODO: remapping from java locals to wasm locals
 		}
@@ -316,7 +311,7 @@ public interface Operation {
 	record PushArray(Type type) implements Operation {}
 	record PopLocal(int index) implements Operation {
 		@Override
-		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
 			out.writeByte(0x21);
 			Util.writeVarUInt(out, this.index); // TODO: remapping from java locals to wasm locals
 		}
@@ -337,7 +332,7 @@ public interface Operation {
 		}
 
 		@Override
-		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
 			// TODO: better way than multiply??
 			out.writeByte(intType == ValueType.I32 ? 0x41 :
 			           /* intType == ValueType.I64 ? */ 0x42); // Load const int
@@ -348,7 +343,7 @@ public interface Operation {
 	}
 	record IncrementLocal(int index, short shift) implements Operation {
 		@Override
-		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
 			out.writeByte(0x20); // local.get
 			Util.writeVarUInt(out, this.index); // TODO: translate locals
 			out.writeByte(0x41); // i32.const
@@ -360,7 +355,7 @@ public interface Operation {
 	}
 	record TrimInt(int size, boolean unsigned) implements Operation {
 		@Override
-		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
 			out.writeByte(0x41); // i32.const
 			int mask = 0;
 			for (int i = 0; i < size; i++) {
@@ -380,21 +375,24 @@ public interface Operation {
 	}
 	record InvokeMethod(ClassHandler.ConstantMethodRefInfo method) implements Operation {
 		@Override
-		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
 			out.writeByte(0x10); // call
-			Util.writeVarUInt(out, context.getFunctionIndex(method));
+			Util.writeVarUInt(out, context.methodBindings.getFunctionIndex(method));
 		}
 	}
 	record PutStatic(ClassHandler.ConstantFieldRefInfo field) implements Operation {
+		public PutStatic {
+
+		}
 		@Override
-		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
 			out.writeByte(0x24); // global.set
-			Util.writeVarUInt(out, context.getGlobalIndex(field));
+			Util.writeVarUInt(out, context.methodBindings.getGlobalIndex(field));
 		}
 	}
 	record GetStatic(ClassHandler.ConstantFieldRefInfo field) implements Operation {
 		@Override
-		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
 			out.writeByte(0x23); // global.set
 			Util.writeVarUInt(out, context.getGlobalIndex(field));
 		}
@@ -402,13 +400,13 @@ public interface Operation {
 	interface Conditional extends Operation {
 		int jumpTarget();
 		@Override
-		default void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+		default void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
 			if (jumpTarget() < 0) {
 				out.writeByte(0x03); // loop
 			} else out.writeByte(0x04); // if
-			intermediaryMethod.getOpsInRange(index + jumpTarget(), index).forEachOrdered(pair -> {
+			context.getOpsInRange(index + jumpTarget(), index).forEachOrdered(pair -> {
 				try {
-					pair.second().writeWasm(pair.first(), intermediaryMethod, out, context);
+					pair.second().writeWasm(pair.first(), context, out);
 				} catch (IOException e) {
 					throw new UncheckedIOException(e);
 				}
@@ -419,36 +417,36 @@ public interface Operation {
 	}
 	record NullCheck(boolean invert, int jumpTarget) implements Conditional {
 		@Override
-		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
 			out.writeByte(0xD1); // ref.is_null
 			if (invert) {
 				out.writeByte(0x41); // i32.const
 				Util.writeVarInt(out, 1);
 				out.writeByte(0x73); // i32.xor
 			}
-			Conditional.super.writeWasm(index, intermediaryMethod, out, context);
+			Conditional.super.writeWasm(index, context, out);
 		}
 	}
 	record ComparisonConditional(int compareCode, int jumpTarget) implements Conditional {
 		@Override
-		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
 			out.writeByte(0x41); // i32.const
 			Util.writeVarUInt(out, 0);
 			out.writeByte(compareCode);
-			Conditional.super.writeWasm(index, intermediaryMethod, out, context);
+			Conditional.super.writeWasm(index, context, out);
 		}
 	}
 	record FullComparisonConditional(int compareCode, int jumpTarget) implements Conditional {
 		@Override
-		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
 			out.writeByte(compareCode);
-			Conditional.super.writeWasm(index, intermediaryMethod, out, context);
+			Conditional.super.writeWasm(index, context, out);
 		}
 	}
 	record GoTo(int jumpTarget) implements Operation {}
 	record JumpTable(int defaultIndex, int firstMatch, List<Integer> jumpIndices) implements Operation {
 		@Override
-		public void writeWasm(int index, IntermediaryMethod intermediaryMethod, DataOutputStream out, ModuleContext context) throws IOException {
+		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
 			// valueIndex -> [jumpIndex]
 			var indicesByValue = IntStream.range(0, jumpIndices.size() + 1)
 							.mapToObj(i -> new Pair<>(i, i >= jumpIndices.size() ? defaultIndex : jumpIndices.get(i)))
@@ -477,9 +475,9 @@ public interface Operation {
 			});
 			// block closures
 			for (int i = 0; i < indicesByValue.size(); i++) {
-				intermediaryMethod.getBlockAt(index + indicesByValue.get(i).second()).forEachOrdered(pair -> {
+				context.getBlockAt(index + indicesByValue.get(i).second()).forEachOrdered(pair -> {
 					try {
-						pair.second().writeWasm(pair.first(), intermediaryMethod, out, context);
+						pair.second().writeWasm(pair.first(), context, out);
 					} catch (IOException e) {
 						throw new UncheckedIOException(e);
 					}
@@ -494,6 +492,47 @@ public interface Operation {
 					throw new RuntimeException(e);
 				}
 			}
+		}
+	}
+	public static class LookupTable implements Operation {
+		public final Map<Integer, Integer> mappings;
+		public final int defaultValue;
+		private final @Unsigned int tableIndex;
+		private final int start;
+		private final int size;
+
+		LookupTable(Map<Integer, Integer> mappings, int defaultValue, WasmModule module) {
+			this.mappings = mappings;
+			this.defaultValue = defaultValue;
+			int min = -Integer.MAX_VALUE, max = Integer.MIN_VALUE;
+			for (int index : mappings.keySet()) {
+				min = Integer.min(min, index);
+				max = Integer.max(max, index);
+			}
+			start = min;
+			size = max - min;
+			tableIndex = module.createTable(size, ValueType.I32);
+			int[] lookups = new int[size];
+			for (int i = 0; i < size; i++) {
+				lookups[i] =  mappings.getOrDefault(i, defaultValue);
+			}
+			module.initTable(tableIndex, lookups);
+		}
+
+		// Implementation: we probably want to vary depending on what distribution of values we see
+		// We definately cant represent all 4billion possible values
+		// Fortunately java is under same limitation - their tables cannot be too large due to the
+		// table being inlined in the bytecode. Unfortunately their implementation can allow for widely
+		// distributed values, which we cannot represent with a table.
+		@Override
+		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
+			// Naive implementation:
+			out.writeByte(0x41); // i32.const
+			Util.writeVarInt(out, start);
+			out.writeByte(0x6B); // i32.sub
+			out.writeByte(0x25); // table.get
+			Util.writeVarUInt(out, tableIndex);
+			// TODO: bounds checks
 		}
 	}
 }

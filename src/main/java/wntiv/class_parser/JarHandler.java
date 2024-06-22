@@ -56,4 +56,8 @@ public class JarHandler {
 		}
 		return module;
 	}
+
+	public int getFunctionIndex(ClassHandler.ConstantMethodRefInfo method) {
+		return 0; // TODO:
+	}
 }

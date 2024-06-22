@@ -3,6 +3,7 @@ package wntiv.class_parser;
 
 import jdk.jfr.Unsigned;
 import org.jetbrains.annotations.Nullable;
+import wntiv.wasm_output.WasmModule;
 
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
@@ -91,7 +92,7 @@ public class ClassHandler {
 		}
 		int methods_count = in.readUnsignedShort();
 		while(methods_count --> 0) {
-			methods.add(MethodInfo.readFrom(in, constant_pool));
+			methods.add(MethodInfo.readFrom(this, in, constant_pool));
 		}
 		attributes = new Attributes(in, constant_pool);
 	}
@@ -1266,8 +1267,10 @@ public class ClassHandler {
 		final String name;
 		final String descriptor;
 		final Attributes attributes;
+		public final ClassHandler ownerClass;
 
-		private MethodInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
+		private MethodInfo(ClassHandler classHandler, DataInputStream in, ConstantPool constantPool) throws IOException {
+			ownerClass = classHandler;
 			access_flags = in.readShort();
 			if(!(constantPool.get(in.readUnsignedShort()) instanceof ConstantUtf8Info method_name))
 				throw new RuntimeException("Invalid method name");
@@ -1278,8 +1281,8 @@ public class ClassHandler {
 			attributes = new Attributes(in, constantPool);
 		}
 
-		public static MethodInfo readFrom(DataInputStream in, ConstantPool constantPool) throws IOException {
-			return new MethodInfo(in, constantPool);
+		public static MethodInfo readFrom(ClassHandler classHandler, DataInputStream in, ConstantPool constantPool) throws IOException {
+			return new MethodInfo(classHandler, in, constantPool);
 		}
 
 		@Override
@@ -1305,8 +1308,8 @@ public class ClassHandler {
 			return result.toString();
 		}
 
-		public IntermediaryMethod prepareFunction() {
-			IntermediaryMethod result = new IntermediaryMethod(this, moduleCtx);
+		public IntermediaryMethod prepareFunction(WasmModule module, JarHandler binding) {
+			IntermediaryMethod result = new IntermediaryMethod(this, module, binding);
 			return result;
 		}
 	}

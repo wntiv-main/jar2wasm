@@ -131,10 +131,10 @@ public class ClassHandler {
 		return result.toString().replaceAll("\\[[\r\n\t ]*]", "[]");
 	}
 
-	public Map<String, IntermediaryMethod> prepareFunctions() {
-		Map<String, IntermediaryMethod> result = new HashMap<>();
+	public Map<ConstantNameAndTypeInfo, IntermediaryMethod> prepareFunctions(WasmModule module, JarHandler binding) {
+		Map<ConstantNameAndTypeInfo, IntermediaryMethod> result = new HashMap<>();
 		for (MethodInfo method : methods) {
-			result.put(method.name, method.prepareFunction());
+			result.put(method.getNameAndType(), method.prepareFunction(module, binding));
 		}
 		return result;
 	}
@@ -1309,8 +1309,11 @@ public class ClassHandler {
 		}
 
 		public IntermediaryMethod prepareFunction(WasmModule module, JarHandler binding) {
-			IntermediaryMethod result = new IntermediaryMethod(this, module, binding);
-			return result;
+			return new IntermediaryMethod(this, module, binding);
+		}
+
+		public ConstantNameAndTypeInfo getNameAndType() {
+			return new ConstantNameAndTypeInfo(name, descriptor);
 		}
 	}
 
@@ -1365,66 +1368,60 @@ public class ClassHandler {
 		}
 	}
 
-	static abstract class ConstantPoolItem {
-		protected ConstantPoolItem(ConstantPool pool) {
-			pool.add(this);
-		}
-
-		@Override
-		public abstract String toString();
-
+	interface ConstantPoolItem {
 		static void readFrom(DataInputStream in, ConstantPool constantPool) throws IOException {
-			switch (in.readByte()) {
-				case ConstantClassInfo.TYPE -> new ConstantClassInfo(in, constantPool);
-				case ConstantFieldRefInfo.TYPE -> new ConstantFieldRefInfo(in, constantPool);
-				case ConstantMethodRefInfo.TYPE -> new ConstantMethodRefInfo(in, constantPool);
-				case ConstantInterfaceMethodRefInfo.TYPE -> new ConstantInterfaceMethodRefInfo(in, constantPool);
-				case ConstantStringInfo.TYPE -> new ConstantStringInfo(in, constantPool);
-				case ConstantIntegerInfo.TYPE -> new ConstantIntegerInfo(in, constantPool);
-				case ConstantFloatInfo.TYPE -> new ConstantFloatInfo(in, constantPool);
-				case ConstantLongInfo.TYPE -> new ConstantLongInfo(in, constantPool);
-				case ConstantDoubleInfo.TYPE -> new ConstantDoubleInfo(in, constantPool);
-				case ConstantNameAndTypeInfo.TYPE -> new ConstantNameAndTypeInfo(in, constantPool);
-				case ConstantUtf8Info.TYPE -> new ConstantUtf8Info(in, constantPool);
-				case ConstantMethodHandleInfo.TYPE -> new ConstantMethodHandleInfo(in, constantPool);
-				case ConstantMethodTypeInfo.TYPE -> new ConstantMethodTypeInfo(in, constantPool);
-				case ConstantInvokeDynamicInfo.TYPE -> new ConstantInvokeDynamicInfo(in, constantPool);
+			constantPool.add(switch (in.readByte()) {
+				case ConstantClassInfo.TYPE -> ConstantClassInfo.readFrom(in, constantPool);
+				case ConstantFieldRefInfo.TYPE -> ConstantFieldRefInfo.readFrom(in, constantPool);
+				case ConstantMethodRefInfo.TYPE -> ConstantMethodRefInfo.readFrom(in, constantPool);
+				case ConstantInterfaceMethodRefInfo.TYPE -> ConstantInterfaceMethodRefInfo.readFrom(in, constantPool);
+				case ConstantStringInfo.TYPE -> ConstantStringInfo.readFrom(in, constantPool);
+				case ConstantIntegerInfo.TYPE -> ConstantIntegerInfo.readFrom(in, constantPool);
+				case ConstantFloatInfo.TYPE -> ConstantFloatInfo.readFrom(in, constantPool);
+				case ConstantLongInfo.TYPE -> ConstantLongInfo.readFrom(in, constantPool);
+				case ConstantDoubleInfo.TYPE -> ConstantDoubleInfo.readFrom(in, constantPool);
+				case ConstantNameAndTypeInfo.TYPE -> ConstantNameAndTypeInfo.readFrom(in, constantPool);
+				case ConstantUtf8Info.TYPE -> ConstantUtf8Info.readFrom(in, constantPool);
+				case ConstantMethodHandleInfo.TYPE -> ConstantMethodHandleInfo.readFrom(in, constantPool);
+				case ConstantMethodTypeInfo.TYPE -> ConstantMethodTypeInfo.readFrom(in, constantPool);
+				case ConstantInvokeDynamicInfo.TYPE -> ConstantInvokeDynamicInfo.readFrom(in, constantPool);
 				default -> throw new IllegalStateException("Unexpected value");
-			}
+			});
 		}
 	}
 
-	public static class ConstantClassInfo extends ConstantPoolItem {
+	record ConstantClassInfo(String name) implements ConstantPoolItem {
 		static final byte TYPE = 7;
-		public final String name;
 
-		protected ConstantClassInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
-			super(constantPool);
+		static ConstantClassInfo readFrom(DataInputStream in, ConstantPool constantPool) throws IOException {
 			if(!(constantPool.await(in.readUnsignedShort()) instanceof ConstantUtf8Info cls_name))
 				throw new RuntimeException("Invalid class_name");
-			name = cls_name.value;
+			return new ConstantClassInfo(cls_name.value);
 		}
 
-		@Override
-		public boolean equals(Object obj) {
-			if(!(obj instanceof ConstantClassInfo other)) return false;
-			return name.equals(other.name);
-		}
-		@Override
-		public int hashCode() {
-			return name.hashCode();
-		}
 		@Override
 		public String toString() {
 			return "Class<" + name + ">";
 		}
 	}
-	public static class ConstantMemberRefInfo extends ConstantPoolItem {
-		final ConstantClassInfo cls;
-		final ConstantNameAndTypeInfo signature;
+	public static abstract class ConstantMemberRefInfo implements ConstantPoolItem {
+		private final ConstantClassInfo cls;
+		private final ConstantNameAndTypeInfo signature;
+
+		public ConstantClassInfo getCls() {
+			return cls;
+		}
+
+		public ConstantNameAndTypeInfo getSignature() {
+			return signature;
+		}
+
+		protected ConstantMemberRefInfo(ConstantClassInfo cls, ConstantNameAndTypeInfo member) {
+			this.cls = cls;
+			signature = member;
+		}
 
 		protected ConstantMemberRefInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
-			super(constantPool);
 			int class_index = in.readUnsignedShort();
 			int name_and_type_index = in.readUnsignedShort();
 			if(!(constantPool.await(class_index) instanceof ConstantClassInfo cls_info))
@@ -1436,6 +1433,24 @@ public class ClassHandler {
 		}
 
 		@Override
+		public boolean equals(Object o) {
+			if (this == o) return true;
+			if (o == null || getClass() != o.getClass()) return false;
+
+			ConstantMemberRefInfo that = (ConstantMemberRefInfo) o;
+
+			if (!cls.equals(that.cls)) return false;
+			return signature.equals(that.signature);
+		}
+
+		@Override
+		public int hashCode() {
+			int result = cls.hashCode();
+			result = 31 * result ^ signature.hashCode();
+			return result;
+		}
+
+		@Override
 		public String toString() {
 			return cls.toString() + "::" + signature.toString();
 		}
@@ -1443,33 +1458,43 @@ public class ClassHandler {
 	public static class ConstantFieldRefInfo extends ConstantMemberRefInfo {
 		static final byte TYPE = 9;
 
-		protected ConstantFieldRefInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
+		private ConstantFieldRefInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
 			super(in, constantPool);
+		}
+
+		static ConstantFieldRefInfo readFrom(DataInputStream in, ConstantPool constantPool) throws IOException {
+			return new ConstantFieldRefInfo(in, constantPool);
 		}
 	}
 	public static class ConstantMethodRefInfo extends ConstantMemberRefInfo {
 		static final byte TYPE = 10;
 
-		protected ConstantMethodRefInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
+		private ConstantMethodRefInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
 			super(in, constantPool);
+		}
+
+		static ConstantMethodRefInfo readFrom(DataInputStream in, ConstantPool constantPool) throws IOException {
+			return new ConstantMethodRefInfo(in, constantPool);
 		}
 	}
 	public static class ConstantInterfaceMethodRefInfo extends ConstantMemberRefInfo {
 		static final byte TYPE = 11;
 
-		protected ConstantInterfaceMethodRefInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
+		private ConstantInterfaceMethodRefInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
 			super(in, constantPool);
 		}
-	}
-	public static class ConstantStringInfo extends ConstantPoolItem {
-		static final byte TYPE = 8;
-		final String value;
 
-		protected ConstantStringInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
-			super(constantPool);
+		static ConstantInterfaceMethodRefInfo readFrom(DataInputStream in, ConstantPool constantPool) throws IOException {
+			return new ConstantInterfaceMethodRefInfo(in, constantPool);
+		}
+	}
+	record ConstantStringInfo(String value) implements ConstantPoolItem {
+		static final byte TYPE = 8;
+
+		static ConstantStringInfo readFrom(DataInputStream in, ConstantPool constantPool) throws IOException {
 			if(!(constantPool.await(in.readUnsignedShort()) instanceof ConstantUtf8Info str))
 				throw new RuntimeException("Invalid string value");
-			value = str.value;
+			return new ConstantStringInfo(str.value);
 		}
 
 		@Override
@@ -1477,13 +1502,11 @@ public class ClassHandler {
 			return "String(\"" + value + "\")";
 		}
 	}
-	public static class ConstantIntegerInfo extends ConstantPoolItem {
+	record ConstantIntegerInfo(int value) implements ConstantPoolItem {
 		static final byte TYPE = 3;
-		final int value;
 
-		protected ConstantIntegerInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
-			super(constantPool);
-			value = in.readInt();
+		static ConstantIntegerInfo readFrom(DataInputStream in, ConstantPool constantPool) throws IOException {
+			return new ConstantIntegerInfo(in.readInt());
 		}
 
 		@Override
@@ -1491,13 +1514,11 @@ public class ClassHandler {
 			return Integer.toString(value);
 		}
 	}
-	public static class ConstantFloatInfo extends ConstantPoolItem {
+	record ConstantFloatInfo(float value) implements ConstantPoolItem {
 		static final byte TYPE = 4;
-		final float value;
 
-		protected ConstantFloatInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
-			super(constantPool);
-			value = in.readFloat();
+		static ConstantFloatInfo readFrom(DataInputStream in, ConstantPool constantPool) throws IOException {
+			return new ConstantFloatInfo(in.readFloat());
 		}
 
 		@Override
@@ -1505,14 +1526,13 @@ public class ClassHandler {
 			return Float.toString(value);
 		}
 	}
-	public static class ConstantLongInfo extends ConstantPoolItem {
+	record ConstantLongInfo(long value) implements ConstantPoolItem {
 		static final byte TYPE = 5;
-		final long value;
 
-		protected ConstantLongInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
-			super(constantPool);
-			constantPool.add(this);
-			value = in.readLong();
+		static ConstantLongInfo readFrom(DataInputStream in, ConstantPool constantPool) throws IOException {
+			ConstantLongInfo result = new ConstantLongInfo(in.readLong());
+			constantPool.add(result); // Long & Double take up two slots
+			return result;
 		}
 
 		@Override
@@ -1520,14 +1540,13 @@ public class ClassHandler {
 			return Long.toString(value);
 		}
 	}
-	public static class ConstantDoubleInfo extends ConstantPoolItem {
+	record ConstantDoubleInfo(double value) implements ConstantPoolItem {
 		static final byte TYPE = 6;
-		final double value;
 
-		protected ConstantDoubleInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
-			super(constantPool);
-			constantPool.add(this);
-			value = in.readDouble();
+		static ConstantDoubleInfo readFrom(DataInputStream in, ConstantPool constantPool) throws IOException {
+			ConstantDoubleInfo result = new ConstantDoubleInfo(in.readDouble());
+			constantPool.add(result); // Long & Double take up two slots
+			return result;
 		}
 
 		@Override
@@ -1535,21 +1554,17 @@ public class ClassHandler {
 			return Double.toString(value);
 		}
 	}
-	public static class ConstantNameAndTypeInfo extends ConstantPoolItem {
+	record ConstantNameAndTypeInfo(String name, String descriptor) implements ConstantPoolItem {
 		static final byte TYPE = 12;
-		final String name;
-		final String descriptor;
 
-		protected ConstantNameAndTypeInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
-			super(constantPool);
+		static ConstantNameAndTypeInfo readFrom(DataInputStream in, ConstantPool constantPool) throws IOException {
 			int name_index = in.readUnsignedShort();
 			int type_index = in.readUnsignedShort();
-			if(!(constantPool.await(name_index) instanceof ConstantUtf8Info val_name))
+			if(!(constantPool.await(name_index) instanceof ConstantUtf8Info name))
 				throw new RuntimeException("Invalid value name");
-			if(!(constantPool.await(type_index) instanceof ConstantUtf8Info val_type))
+			if(!(constantPool.await(type_index) instanceof ConstantUtf8Info type))
 				throw new RuntimeException("Invalid value descriptor");
-			name = val_name.value;
-			descriptor = val_type.value;
+			return new ConstantNameAndTypeInfo(name.value, type.value);
 		}
 
 		@Override
@@ -1557,16 +1572,14 @@ public class ClassHandler {
 			return name + ": " + descriptor;
 		}
 	}
-	public static class ConstantUtf8Info extends ConstantPoolItem {
+	record ConstantUtf8Info(String value) implements ConstantPoolItem {
 		static final byte TYPE = 1;
-		final @Unsigned String value;
 
-		protected ConstantUtf8Info(DataInputStream in, ConstantPool constantPool) throws IOException {
-			super(constantPool);
+		static ConstantUtf8Info readFrom(DataInputStream in, ConstantPool constantPool) throws IOException {
 			int length = in.readUnsignedShort();
 			// TODO: fucking java uses weird "modified" UTF8
 			// see: https://docs.oracle.com/javase/specs/jvms/se7/html/jvms-4.html#jvms-4.4.7
-			value = new String(in.readNBytes(length), StandardCharsets.UTF_8);
+			return new ConstantUtf8Info(new String(in.readNBytes(length), StandardCharsets.UTF_8));
 		}
 
 		@Override
@@ -1574,7 +1587,7 @@ public class ClassHandler {
 			return '"' + value + '"';
 		}
 	}
-	public static class ConstantMethodHandleInfo extends ConstantPoolItem {
+	record ConstantMethodHandleInfo(@Unsigned byte referenceType, ConstantMemberRefInfo reference) implements ConstantPoolItem {
 		static final byte REF_getField = (byte)1; // getfield C.f:T
 		static final byte REF_getStatic = (byte)2; // getstatic C.f:T
 		static final byte REF_putField = (byte)3; // putfield C.f:T
@@ -1585,28 +1598,25 @@ public class ClassHandler {
 		static final byte REF_newInvokeSpecial = (byte)8; // new C; dup; invokespecial C.<init>:(A*)void
 		static final byte REF_invokeInterface = (byte)9; // invokeinterface C.m:(A*)T
 		static final byte TYPE = 15;
-		final @Unsigned byte /* ReferenceType */ reference_type;
-		final ConstantPoolItem reference;
 
-		protected ConstantMethodHandleInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
-			super(constantPool);
-			reference_type = in.readByte();
+		static ConstantMethodHandleInfo readFrom(DataInputStream in, ConstantPool constantPool) throws IOException {
+			byte referenceType = in.readByte();
 			ConstantPoolItem ref = constantPool.await(in.readUnsignedShort());
-			if(!switch (reference_type) {
+			if(!switch (referenceType) {
 				case REF_getField, REF_getStatic, REF_putField, REF_putStatic
 						-> ref instanceof ConstantFieldRefInfo;
 				case REF_invokeVirtual, REF_invokeStatic, REF_invokeSpecial, REF_newInvokeSpecial
 						-> ref instanceof ConstantMethodRefInfo || /* apparently, undocumented */ ref instanceof ConstantInterfaceMethodRefInfo;
 				case REF_invokeInterface
 						-> ref instanceof ConstantInterfaceMethodRefInfo;
-				default -> throw new RuntimeException("Unexpected reference type: " + reference_type);})
-				throw new RuntimeException("Invalid reference for type " + reference_type);
-			reference = ref;
+				default -> throw new RuntimeException("Unexpected reference type: " + referenceType);})
+				throw new RuntimeException("Invalid reference for type " + referenceType);
+			return new ConstantMethodHandleInfo(referenceType, (ConstantMemberRefInfo) ref);
 		}
 
 		@Override
 		public String toString() {
-			return "&(" + switch (reference_type) {
+			return "&(" + switch (referenceType) {
 				case REF_getField -> "getField";
 				case REF_getStatic -> "getStatic";
 				case REF_putField -> "putField";
@@ -1620,15 +1630,13 @@ public class ClassHandler {
 			} + ")" + reference.toString();
 		}
 	}
-	public static class ConstantMethodTypeInfo extends ConstantPoolItem {
+	record ConstantMethodTypeInfo(String descriptor) implements ConstantPoolItem {
 		static final byte TYPE = 16;
-		final String descriptor;
 
-		protected ConstantMethodTypeInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
-			super(constantPool);
+		static ConstantMethodTypeInfo readFrom(DataInputStream in, ConstantPool constantPool) throws IOException {
 			if(!(constantPool.await(in.readUnsignedShort()) instanceof ConstantUtf8Info desc))
 				throw new RuntimeException("Invalid descriptor");
-			descriptor = desc.value;
+			return new ConstantMethodTypeInfo(desc.value);
 		}
 
 		@Override
@@ -1636,22 +1644,19 @@ public class ClassHandler {
 			return descriptor;
 		}
 	}
-	public static class ConstantInvokeDynamicInfo extends ConstantPoolItem {
+	record ConstantInvokeDynamicInfo(@Unsigned short bootstrapMethodAddrIndex, ConstantNameAndTypeInfo signature) implements ConstantPoolItem {
 		static final byte TYPE = 18;
-		final @Unsigned short bootstrap_method_attr_index;
-		final ConstantNameAndTypeInfo signature;
 
-		protected ConstantInvokeDynamicInfo(DataInputStream in, ConstantPool constantPool) throws IOException {
-			super(constantPool);
-			bootstrap_method_attr_index = in.readShort();
+		static ConstantInvokeDynamicInfo readFrom(DataInputStream in, ConstantPool constantPool) throws IOException {
+			short bootstrapIdx = in.readShort();
 			if(!(constantPool.await(in.readUnsignedShort()) instanceof ConstantNameAndTypeInfo name_type))
 				throw new RuntimeException("Invalid signature");
-			signature = name_type;
+			return new ConstantInvokeDynamicInfo(bootstrapIdx, name_type);
 		}
 
 		@Override
 		public String toString() {
-			return signature + " @" + bootstrap_method_attr_index;
+			return signature + " @" + bootstrapMethodAddrIndex;
 		}
 	}
 }

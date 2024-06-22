@@ -14,7 +14,10 @@ import java.util.zip.ZipOutputStream;
 public class JarHandler {
 	private final ZipOutputStream assetsOut;
 	private final Map<ClassHandler.ConstantClassInfo, ClassHandler> classes =  new HashMap<>();
-	private final Map<ClassHandler.ConstantClassInfo, Map<String, IntermediaryMethod>> methods = new HashMap<>();
+	private final List<IntermediaryMethod> methods = new ArrayList<>();
+	private final Map<ClassHandler.ConstantClassInfo,
+						Map<ClassHandler.ConstantNameAndTypeInfo, Integer>> methodIds = new HashMap<>();
+	private final WasmModule module = new WasmModule();
 	public JarHandler(JarInputStream input) throws IOException {
 		File outFile = new File("./out/assets.zip");
 		assert outFile.getParentFile().mkdirs();
@@ -44,20 +47,27 @@ public class JarHandler {
 		parseJar(input, assetsOut); // TODO: not use same assets file?
 	}
 	public WasmModule transpile() {
-		WasmModule module = new WasmModule();
 		for (var entry : classes.entrySet()) {
-			methods.put(entry.getKey(), entry.getValue().prepareFunctions());
-		}
-		for (var entry : methods.entrySet()) {
-			for (var method : entry.getValue().entrySet()) {
-				var functionIndex = module.addFunction(method.getValue());
-				// entry.getValue().resolveDependencies(methods);
+			Map<ClassHandler.ConstantNameAndTypeInfo, Integer> classMethodIds = new HashMap<>();
+			var classMethods = entry.getValue().prepareFunctions(this.module, this);
+			for (var methodEntry : classMethods.entrySet()) {
+				methods.add(methodEntry.getValue());
+				classMethodIds.put(methodEntry.getKey(), methods.size() - 1);
 			}
+			methodIds.put(entry.getKey(), classMethodIds);
+		}
+		// Must do seperately so all methods are defined in method ordering
+		for (IntermediaryMethod method : methods) {
+			module.addFunction(method);
 		}
 		return module;
 	}
 
 	public int getFunctionIndex(ClassHandler.ConstantMethodRefInfo method) {
-		return 0; // TODO:
+		return methodIds.get(method.getCls()).get(method.getSignature());
+	}
+
+	public int getOrAddGlobal(ClassHandler.ConstantFieldRefInfo field) {
+		// TODO
 	}
 }

@@ -380,14 +380,15 @@ public interface Operation {
 			Util.writeVarUInt(out, context.methodBindings.getFunctionIndex(method));
 		}
 	}
-	record PutStatic(ClassHandler.ConstantFieldRefInfo field) implements Operation {
-		public PutStatic {
-
+	class PutStatic implements Operation {
+		public final int globalIndex;
+		public PutStatic(ClassHandler.ConstantFieldRefInfo field, JarHandler binder) {
+			globalIndex = binder.getOrAddGlobal(field);
 		}
 		@Override
 		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
 			out.writeByte(0x24); // global.set
-			Util.writeVarUInt(out, context.methodBindings.getGlobalIndex(field));
+			Util.writeVarUInt(out, globalIndex);
 		}
 	}
 	record GetStatic(ClassHandler.ConstantFieldRefInfo field) implements Operation {
@@ -465,6 +466,9 @@ public interface Operation {
 				out.writeByte(0x40); // no result (TODO: should this be this way?)
 			}
 			out.writeByte(0x0E); // br_table
+			// curious asymmetry between lookup table and jump table in wasm
+			// jump tables can be completely inlined in the bytecode whereas
+			// lookup tables require a wasm table structure
 			Util.writeVarUInt(out, jumpIndices.size());
 			valueOrder.forEach(idx -> { // write block ordering
 				try {
@@ -494,7 +498,7 @@ public interface Operation {
 			}
 		}
 	}
-	public static class LookupTable implements Operation {
+	class LookupTable implements Operation {
 		public final Map<Integer, Integer> mappings;
 		public final int defaultValue;
 		private final @Unsigned int tableIndex;
@@ -526,13 +530,28 @@ public interface Operation {
 		// distributed values, which we cannot represent with a table.
 		@Override
 		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
-			// Naive implementation:
+			// Naive implementation: // TODO: maybe make better
 			out.writeByte(0x41); // i32.const
 			Util.writeVarInt(out, start);
 			out.writeByte(0x6B); // i32.sub
-			out.writeByte(0x25); // table.get
-			Util.writeVarUInt(out, tableIndex);
-			// TODO: bounds checks
+			new Dup(1, 1).writeWasm(index, context, out);
+			out.writeByte(0x41); // i32.const
+			Util.writeVarInt(out, size);
+			out.writeByte(0x4B); // i32.gt_u
+			// by using unsigned version, we get lower bound (always 0) also checked for free
+			out.writeByte(0x04); // if
+			{
+				out.writeByte(0x1A); // drop
+				out.writeByte(0x41); // i32.load
+				Util.writeVarInt(out, defaultValue);
+			}
+			out.writeByte(0x05); // else
+			{
+				out.writeByte(0x25); // table.get
+				Util.writeVarUInt(out, tableIndex);
+			}
+			out.writeByte(0x0B);
+			// TODO: is branchless possible?
 		}
 	}
 }

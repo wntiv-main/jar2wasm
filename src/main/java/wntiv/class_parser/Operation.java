@@ -4,7 +4,7 @@ import jdk.jfr.Unsigned;
 import wntiv.Pair;
 import wntiv.wasm_output.Util;
 import wntiv.wasm_output.WasmModule;
-import wntiv.wasm_output.types.ValueType;
+import wntiv.wasm_output.types.*;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -13,6 +13,8 @@ import java.io.UncheckedIOException;
 import java.util.*;
 import java.util.function.IntSupplier;
 import java.util.stream.IntStream;
+
+import static wntiv.wasm_output.types.NumericType.*;
 
 public interface Operation {
 	String[] ARRAY_TYPES = new String[]{"BOOLEAN", "CHAR", "FLOAT", "DOUBLE", "BYTE", "SHORT", "INT", "LONG"};
@@ -34,42 +36,42 @@ public interface Operation {
 //		int instructionPointer = 0;
 		return switch (opcode) {
 			case 0x00 /* nop */ -> new DirectTranslation(0x01);
-			case 0x01 /* aconst_null */ -> new PushConst(ValueType.EXTERNAL_REF, null); // TODO: ??
-			case 0x02 /* iconst_m1 */ -> new PushConst(ValueType.I32, -1);
-			case 0x03 /* iconst_0 */ -> new PushConst(ValueType.I32, 0);
-			case 0x04 /* iconst_1 */ -> new PushConst(ValueType.I32, 1);
-			case 0x05 /* iconst_2 */ -> new PushConst(ValueType.I32, 2);
-			case 0x06 /* iconst_3 */ -> new PushConst(ValueType.I32, 3);
-			case 0x07 /* iconst_4 */ -> new PushConst(ValueType.I32, 4);
-			case 0x08 /* iconst_5 */ -> new PushConst(ValueType.I32, 5);
-			case 0x09 /* lconst_0 */ -> new PushConst(ValueType.I64, 0L);
-			case 0x0a /* lconst_1 */ -> new PushConst(ValueType.I64, 1L);
-			case 0x0b /* fconst_0 */ -> new PushConst(ValueType.F32, 0F);
-			case 0x0c /* fconst_1 */ -> new PushConst(ValueType.F32, 1F);
-			case 0x0d /* fconst_2 */ -> new PushConst(ValueType.F32, 2F);
-			case 0x0e /* dconst_0 */ -> new PushConst(ValueType.F64, 0D);
-			case 0x0f /* dconst_1 */ -> new PushConst(ValueType.F64, 1D);
-			case 0x10 /* bipush */ -> new PushConst(ValueType.I32, input.readByte());
-			case 0x11 /* sipush */ -> new PushConst(ValueType.I32, input.readShort());
+			case 0x01 /* aconst_null */ -> new PushConst(HeapType.AbstractHeapType.ARRAY.asRef(), null); // TODO: ??
+			case 0x02 /* iconst_m1 */ -> new PushConst(I32, -1);
+			case 0x03 /* iconst_0 */ -> new PushConst(I32, 0);
+			case 0x04 /* iconst_1 */ -> new PushConst(I32, 1);
+			case 0x05 /* iconst_2 */ -> new PushConst(I32, 2);
+			case 0x06 /* iconst_3 */ -> new PushConst(I32, 3);
+			case 0x07 /* iconst_4 */ -> new PushConst(I32, 4);
+			case 0x08 /* iconst_5 */ -> new PushConst(I32, 5);
+			case 0x09 /* lconst_0 */ -> new PushConst(I64, 0L);
+			case 0x0a /* lconst_1 */ -> new PushConst(I64, 1L);
+			case 0x0b /* fconst_0 */ -> new PushConst(F32, 0F);
+			case 0x0c /* fconst_1 */ -> new PushConst(F32, 1F);
+			case 0x0d /* fconst_2 */ -> new PushConst(F32, 2F);
+			case 0x0e /* dconst_0 */ -> new PushConst(NumericType.F64, 0D);
+			case 0x0f /* dconst_1 */ -> new PushConst(NumericType.F64, 1D);
+			case 0x10 /* bipush */ -> new PushConst(I32, input.readByte());
+			case 0x11 /* sipush */ -> new PushConst(I32, input.readShort());
 			case 0x12 /* ldc */, 0x13 /* ldc_w */ -> {
 				ClassHandler.ConstantPoolItem constValue = pool.get(opcode == 0x12 ? input.readUnsignedByte()
 				                                                                   : input.readUnsignedShort());
 				if (constValue instanceof ClassHandler.ConstantIntegerInfo intValue)
-					yield new PushConst(ValueType.I32, intValue.value());
+					yield new PushConst(I32, intValue.value());
 				else if (constValue instanceof ClassHandler.ConstantFloatInfo floatValue)
-					yield new PushConst(ValueType.F32, floatValue.value());
+					yield new PushConst(F32, floatValue.value());
 				else if (constValue instanceof ClassHandler.ConstantStringInfo stringValue)
-					yield new PushConst(ValueType.EXTERNAL_REF, stringValue.value()); // TODO: Make value in data section??
+					yield new PushConst(HeapType.AbstractHeapType.ARRAY.asRef(), stringValue.value()); // TODO: Make value in data section??
 				else if (constValue instanceof ClassHandler.ConstantClassInfo object)
-					yield new PushConst(ValueType.EXTERNAL_REF, object);
+					yield new PushConst(HeapType.AbstractHeapType.STRUCT.asRef(), object);
 				else throw new RuntimeException("Unexpected const value");
 			}
 			case 0x14 /* ldc2_w */ -> {
 				ClassHandler.ConstantPoolItem constValue = pool.get(input.readUnsignedShort());
 				if (constValue instanceof ClassHandler.ConstantLongInfo longValue)
-					yield new PushConst(ValueType.I64, longValue.value());
+					yield new PushConst(I64, longValue.value());
 				else if (constValue instanceof ClassHandler.ConstantDoubleInfo doubleValue)
-					yield new PushConst(ValueType.F64, doubleValue.value());
+					yield new PushConst(NumericType.F64, doubleValue.value());
 				else throw new RuntimeException("Unexpected const value");
 			}
 			case 0x15 /* iload */ -> new PushLocal(input.readUnsignedByte());
@@ -82,14 +84,14 @@ public interface Operation {
 			case 0x22, 0x23, 0x24, 0x25 /* fload_<n> */ -> new PushLocal(opcode - 0x22);
 			case 0x26, 0x27, 0x28, 0x29 /* dload_<n> */ -> new PushLocal(opcode - 0x26);
 			case 0x2a, 0x2b, 0x2c, 0x2d /* aload_<n> */ -> new PushLocal(opcode - 0x2a);
-			case 0x2e /* iaload */ -> new PushArray(Type.INT);
-			case 0x2f /* laload */ -> new PushArray(Type.LONG);
-			case 0x30 /* faload */ -> new PushArray(Type.FLOAT);
-			case 0x31 /* daload */ -> new PushArray(Type.DOUBLE);
-			case 0x32 /* aaload */ -> new PushArray(Type.ARRAY);
-			case 0x33 /* baload */ -> new PushArray(Type.BYTE);
-			case 0x34 /* caload */ -> new PushArray(Type.CHAR);
-			case 0x35 /* saload */ -> new PushArray(Type.SHORT);
+			case 0x2e /* iaload */ -> new PushArray(I32);
+			case 0x2f /* laload */ -> new PushArray(I64);
+			case 0x30 /* faload */ -> new PushArray(F32);
+			case 0x31 /* daload */ -> new PushArray(F64);
+			case 0x32 /* aaload */ -> new PushArray(HeapType.AbstractHeapType.ARRAY.asRef());
+			case 0x33 /* baload */ -> new PushArray(PackedType.I8);
+			case 0x34 /* caload */ -> new PushArray(PackedType.I16);
+			case 0x35 /* saload */ -> new PushArray(PackedType.I16);
 			case 0x36 /* istore */ -> new PopLocal(input.readUnsignedByte());
 			case 0x37 /* lstore */ -> new PopLocal(input.readUnsignedByte());
 			case 0x38 /* fstore */ -> new PopLocal(input.readUnsignedByte());
@@ -135,10 +137,10 @@ public interface Operation {
 			case 0x6f /* ddiv */ -> new DirectTranslation(0xA3);
 			case 0x70 /* irem */ -> new DirectTranslation(0x6F);
 			case 0x71 /* lrem */ -> new DirectTranslation(0x81);
-			case 0x72 /* frem */ -> new FloatRem(ValueType.F32);
-			case 0x73 /* drem */ -> new FloatRem(ValueType.F64);
-			case 0x74 /* ineg */ -> new IntegerNeg(ValueType.I32);
-			case 0x75 /* lneg */ -> new IntegerNeg(ValueType.I64);
+			case 0x72 /* frem */ -> new FloatRem(F32);
+			case 0x73 /* drem */ -> new FloatRem(NumericType.F64);
+			case 0x74 /* ineg */ -> new IntegerNeg(I32);
+			case 0x75 /* lneg */ -> new IntegerNeg(I64);
 			case 0x76 /* fneg */ -> new DirectTranslation(0x8C);
 			case 0x77 /* dneg */ -> new DirectTranslation(0x9A);
 			case 0x78 /* ishl */ -> new DirectTranslation(0x74);
@@ -169,11 +171,11 @@ public interface Operation {
 			case 0x91 /* i2b */ -> new TrimInt(1, false);
 			case 0x92 /* i2c */ -> new TrimInt(2, true);
 			case 0x93 /* i2s */ -> new TrimInt(2, false);
-			case 0x94 /* lcmp */ -> new Compare(ValueType.I64, false); // TODO: Java uses cmp then if_<cond>,
-			case 0x95 /* fcmpl */ -> new Compare(ValueType.F32, false); // whereas WASM uses cmp_<cond> then if...
-			case 0x96 /* fcmpg */ -> new Compare(ValueType.F32, true); // We need to translate
-			case 0x97 /* dcmpl */ -> new Compare(ValueType.F64, false);
-			case 0x98 /* dcmpg */ -> new Compare(ValueType.F64, true);
+			case 0x94 /* lcmp */ -> new Compare(I64, false); // TODO: Java uses cmp then if_<cond>,
+			case 0x95 /* fcmpl */ -> new Compare(F32, false); // whereas WASM uses cmp_<cond> then if...
+			case 0x96 /* fcmpg */ -> new Compare(F32, true); // We need to translate
+			case 0x97 /* dcmpl */ -> new Compare(NumericType.F64, false);
+			case 0x98 /* dcmpg */ -> new Compare(NumericType.F64, true);
 			case 0x99 /* ifeq */ -> new ComparisonConditional(0x46, input.readShort());
 			case 0x9a /* ifne */ -> new ComparisonConditional(0x47, input.readShort());
 			case 0x9b /* iflt */ -> new ComparisonConditional(0x48, input.readShort());
@@ -293,12 +295,13 @@ public interface Operation {
 	record PushConst(ValueType type, Object value) implements Operation {
 		@Override
 		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
-			switch (type) {
+			if (type instanceof NumericType numType) switch (numType) {
 				case I32 -> { out.writeByte(0x41); Util.writeVarInt(out, (int) value); }
 				case I64 -> { out.writeByte(0x42); Util.writeVarInt(out, (long) value); }
 				case F32 -> { out.writeByte(0x43); Util.writeFloat(out, (float) value); }
 				case F64 -> { out.writeByte(0x44); Util.writeDouble(out, (double) value); }
-				case EXTERNAL_REF -> throw new RuntimeException("Not implemented"); // TODO: how are we doing arrays??
+			} else {
+				// TODO:
 			}
 		}
 	}
@@ -309,7 +312,9 @@ public interface Operation {
 			Util.writeVarUInt(out, this.index); // TODO: remapping from java locals to wasm locals
 		}
 	}
-	record PushArray(Type type) implements Operation {}
+	record PushArray(StorageType type) implements Operation {
+		// TODO: https://webassembly.github.io/gc/core/bikeshed/index.html#heap-types%E2%91%A6
+	}
 	record PopLocal(int index) implements Operation {
 		@Override
 		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {

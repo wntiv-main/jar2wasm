@@ -7,7 +7,7 @@ import java.io.IOException;
 
 public record TableType(Limits size, ValueType refType) implements Writable {
 	public TableType {
-		if (!ValueType.isReferenceType(refType))
+		if (!(refType instanceof ReferenceType))
 			throw new IllegalArgumentException("refType must be a valid reference type");
 	}
 	@Override

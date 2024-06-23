@@ -16,14 +16,14 @@ import java.util.stream.Stream;
 public class IntermediaryMethod implements WasmFunction {
 	private final ClassHandler.MethodInfo info;
 	private final WasmModule module;
-	public final JarHandler methodBindings;
+	public final JarHandler bindings;
 	private final List<Operation> code = new ArrayList<>();
 	private final List<Integer> codeIndex = new ArrayList<>();
 
 	public IntermediaryMethod(ClassHandler.MethodInfo method, WasmModule module, JarHandler binding) {
 		this.info = method;
 		this.module = module;
-		methodBindings = binding;
+		bindings = binding;
 		assert info.attributes.code != null;
 		try {
 			var codeSrc = new ByteArrayInputStream(info.attributes.code.code) {
@@ -34,7 +34,7 @@ public class IntermediaryMethod implements WasmFunction {
 			DataInputStream dataView = new DataInputStream(codeSrc);
 			while (dataView.available() > 0) {
 				int pos = codeSrc.getPos();
-				Operation op = Operation.readFromStream(this, dataView, codeSrc::getPos, method.ownerClass.constant_pool);
+				Operation op = Operation.readFromStream(this, dataView, codeSrc::getPos);
 				if (op instanceof Operation.GoTo) {
 					// TODO: Special handling??
 				} else {
@@ -45,6 +45,14 @@ public class IntermediaryMethod implements WasmFunction {
 		} catch (IOException e) {
 			throw new UncheckedIOException(e); // ^-^
 		}
+	}
+
+	public ClassHandler.MethodInfo getInfo() {
+		return info;
+	}
+
+	public WasmModule getModule() {
+		return module;
 	}
 
 	@Override

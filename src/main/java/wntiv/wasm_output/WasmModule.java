@@ -62,6 +62,71 @@ public class WasmModule {
 		}
 	}
 
+	public int addGlobal(int initialValue, boolean mutable) {
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+		DataOutputStream dataView = new DataOutputStream(bytes);
+		Expression initExpr;
+		try {
+			dataView.writeByte(0x41); // i32.const
+			Util.writeVarInt(dataView, initialValue);
+			initExpr = new Expression(bytes.toByteArray());
+			dataView.close();
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
+		}
+		return globals.add(new GlobalSection.Global(
+				new GlobalType(ValueType.I32, mutable),
+				initExpr));
+	}
+	public int addGlobal(float initialValue, boolean mutable) {
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+		DataOutputStream dataView = new DataOutputStream(bytes);
+		Expression initExpr;
+		try {
+			dataView.writeByte(0x43); // f32.const
+			Util.writeFloat(dataView, initialValue);
+			initExpr = new Expression(bytes.toByteArray());
+			dataView.close();
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
+		}
+		return globals.add(new GlobalSection.Global(
+				new GlobalType(ValueType.F32, mutable),
+				initExpr));
+	}
+	public int addGlobal(long initialValue, boolean mutable) {
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+		DataOutputStream dataView = new DataOutputStream(bytes);
+		Expression initExpr;
+		try {
+			dataView.writeByte(0x42); // i64.const
+			Util.writeVarInt(dataView, initialValue);
+			initExpr = new Expression(bytes.toByteArray());
+			dataView.close();
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
+		}
+		return globals.add(new GlobalSection.Global(
+				new GlobalType(ValueType.I64, mutable),
+				initExpr));
+	}
+	public int addGlobal(double initialValue, boolean mutable) {
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+		DataOutputStream dataView = new DataOutputStream(bytes);
+		Expression initExpr;
+		try {
+			dataView.writeByte(0x44); // f64.const
+			Util.writeDouble(dataView, initialValue);
+			initExpr = new Expression(bytes.toByteArray());
+			dataView.close();
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
+		}
+		return globals.add(new GlobalSection.Global(
+				new GlobalType(ValueType.F64, mutable),
+				initExpr));
+	}
+
 	public int createTable(int size, ValueType type) {
 		return tables.add(new TableType(new Limits(size, size), type));
 	}

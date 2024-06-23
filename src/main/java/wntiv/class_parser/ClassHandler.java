@@ -1366,6 +1366,10 @@ public class ClassHandler {
 			result.append(attributes.toString().replace("\n", "\n\t"));
 			return result.toString();
 		}
+
+		public ConstantNameAndTypeInfo getNameAndType() {
+			return new ConstantNameAndTypeInfo(name, descriptor);
+		}
 	}
 
 	interface ConstantPoolItem {

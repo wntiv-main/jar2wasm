@@ -26,9 +26,10 @@ public interface Operation {
 		CHAR,
 		SHORT;
 	}
-	default void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {}
-	static Operation readFromStream(IntermediaryMethod method, DataInputStream input, IntSupplier methodIndex, ClassHandler.ConstantPool pool) throws IOException {
+	void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException;
+	static Operation readFromStream(IntermediaryMethod method, DataInputStream input, IntSupplier methodIndex) throws IOException {
 		int opcode = input.readUnsignedByte();
+		ClassHandler.ConstantPool pool = method.getInfo().ownerClass.constant_pool;
 //		StringBuilder result = new StringBuilder(); // TODO: TEMP
 //		int instructionPointer = 0;
 		return switch (opcode) {
@@ -54,11 +55,11 @@ public interface Operation {
 				ClassHandler.ConstantPoolItem constValue = pool.get(opcode == 0x12 ? input.readUnsignedByte()
 				                                                                   : input.readUnsignedShort());
 				if (constValue instanceof ClassHandler.ConstantIntegerInfo intValue)
-					yield new PushConst(ValueType.I32, intValue.value);
+					yield new PushConst(ValueType.I32, intValue.value());
 				else if (constValue instanceof ClassHandler.ConstantFloatInfo floatValue)
-					yield new PushConst(ValueType.F32, floatValue.value);
+					yield new PushConst(ValueType.F32, floatValue.value());
 				else if (constValue instanceof ClassHandler.ConstantStringInfo stringValue)
-					yield new PushConst(ValueType.EXTERNAL_REF, stringValue.value); // TODO: Make value in data section??
+					yield new PushConst(ValueType.EXTERNAL_REF, stringValue.value()); // TODO: Make value in data section??
 				else if (constValue instanceof ClassHandler.ConstantClassInfo object)
 					yield new PushConst(ValueType.EXTERNAL_REF, object);
 				else throw new RuntimeException("Unexpected const value");
@@ -66,9 +67,9 @@ public interface Operation {
 			case 0x14 /* ldc2_w */ -> {
 				ClassHandler.ConstantPoolItem constValue = pool.get(input.readUnsignedShort());
 				if (constValue instanceof ClassHandler.ConstantLongInfo longValue)
-					yield new PushConst(ValueType.I64, longValue.value);
+					yield new PushConst(ValueType.I64, longValue.value());
 				else if (constValue instanceof ClassHandler.ConstantDoubleInfo doubleValue)
-					yield new PushConst(ValueType.F64, doubleValue.value);
+					yield new PushConst(ValueType.F64, doubleValue.value());
 				else throw new RuntimeException("Unexpected const value");
 			}
 			case 0x15 /* iload */ -> new PushLocal(input.readUnsignedByte());
@@ -212,7 +213,7 @@ public interface Operation {
 				while (numPairs-- > 0) {
 					mapping.put(input.readInt(), input.readInt());
 				}
-				yield new LookupTable(mapping, defaultValue);
+				yield new LookupTable(mapping, defaultValue, method.getModule());
 			}
 			case 0xac /* ireturn */ -> throw new RuntimeException("IRETURN");
 			case 0xad /* lreturn */ -> throw new RuntimeException("LRETURN");
@@ -223,12 +224,12 @@ public interface Operation {
 			case 0xb2 /* getstatic */ -> {
 				if (!(pool.get(input.readUnsignedShort()) instanceof ClassHandler.ConstantFieldRefInfo field))
 					throw new RuntimeException("Not a field");
-				yield new GetStatic(field);
+				yield new GetStatic(field, method.bindings);
 			}
 			case 0xb3 /* putstatic */ -> {
 				if (!(pool.get(input.readUnsignedShort()) instanceof ClassHandler.ConstantFieldRefInfo field))
 					throw new RuntimeException("Not a field");
-				yield new PutStatic(field);
+				yield new PutStatic(field, method.bindings);
 			}
 			case 0xb4 /* getfield */ -> throw new RuntimeException("GETFIELD " + pool.get(input.readUnsignedShort()));
 			case 0xb5 /* putfield */ -> throw new RuntimeException("PUT_FIELD " + pool.get(input.readUnsignedShort()));
@@ -239,7 +240,7 @@ public interface Operation {
 					throw new RuntimeException("Not a method");
 				yield new InvokeMethod(func);
 			}
-			case 0xb9 /* invokeinterface */ -> {
+			case 0xb9 /* invokeinterface */ -> { // TODO: we need to consider class vtable access
 				result.append("INVOKE_INTERFACE ").append(pool.get(input.readUnsignedShort()))
 						.append(" ").append(input.readUnsignedByte());
 				assert input.readByte() == 0;
@@ -372,18 +373,52 @@ public interface Operation {
 			if (!ValueType.isNumericType(types))
 				throw new RuntimeException("Cannot compare types");
 		}
+
+		@Override
+		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
+			new Dup(1, 1).writeWasm(index, context, out);
+			out.writeByte(switch (types) {case I32 -> 0x4A;
+			                              case F32 -> 0x5E;
+			                              case I64 -> 0x55;
+			                              case F64 -> 0x64;
+				default -> throw new IllegalStateException("Unexpected value: " + types);
+			}); // gt_s
+			out.writeByte(0x04); // if
+			{
+				out.writeByte(0x1A); // drop
+				out.writeByte(0x41); // i32.const
+				Util.writeVarInt(out, 1);
+			}
+			out.writeByte(0x05); // else
+			{
+				out.writeByte(switch (types) {case I32 -> 0x48;
+					                          case F32 -> 0x5D;
+					                          case I64 -> 0x53;
+					                          case F64 -> 0x63;
+					default -> throw new IllegalStateException("Unexpected value: " + types);
+				}); // lt_s
+				out.writeByte(0x04); // if
+				out.writeByte(0x41); // i32.const
+				Util.writeVarInt(out, -1);
+				out.writeByte(0x05); // else
+				out.writeByte(0x41); // i32.const
+				Util.writeVarInt(out, 0);
+				out.writeByte(0x0B); // end
+			}
+			out.writeByte(0x0B); // end
+		}
 	}
 	record InvokeMethod(ClassHandler.ConstantMethodRefInfo method) implements Operation {
 		@Override
 		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
 			out.writeByte(0x10); // call
-			Util.writeVarUInt(out, context.methodBindings.getFunctionIndex(method));
+			Util.writeVarUInt(out, context.bindings.getFunctionIndex(method));
 		}
 	}
 	class PutStatic implements Operation {
 		public final int globalIndex;
 		public PutStatic(ClassHandler.ConstantFieldRefInfo field, JarHandler binder) {
-			globalIndex = binder.getOrAddGlobal(field);
+			globalIndex = binder.getGlobal(field);
 		}
 		@Override
 		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
@@ -391,11 +426,16 @@ public interface Operation {
 			Util.writeVarUInt(out, globalIndex);
 		}
 	}
-	record GetStatic(ClassHandler.ConstantFieldRefInfo field) implements Operation {
+	class GetStatic implements Operation {
+		public final int globalIndex;
+		public GetStatic(ClassHandler.ConstantFieldRefInfo field, JarHandler binder) {
+			globalIndex = binder.getGlobal(field);
+		}
+
 		@Override
 		public void writeWasm(int index, IntermediaryMethod context, DataOutputStream out) throws IOException {
 			out.writeByte(0x23); // global.set
-			Util.writeVarUInt(out, context.getGlobalIndex(field));
+			Util.writeVarUInt(out, globalIndex);
 		}
 	}
 	interface Conditional extends Operation {

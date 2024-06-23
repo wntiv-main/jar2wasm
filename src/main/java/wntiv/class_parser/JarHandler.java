@@ -17,6 +17,10 @@ public class JarHandler {
 	private final List<IntermediaryMethod> methods = new ArrayList<>();
 	private final Map<ClassHandler.ConstantClassInfo,
 						Map<ClassHandler.ConstantNameAndTypeInfo, Integer>> methodIds = new HashMap<>();
+	private final Map<ClassHandler.ConstantClassInfo,
+					Map<ClassHandler.ConstantNameAndTypeInfo, Integer>> staticFieldIndices = new HashMap<>();
+	private final Map<ClassHandler.ConstantClassInfo,
+					Map<ClassHandler.ConstantNameAndTypeInfo, ClassHandler.FieldInfo>> fieldInfo = new HashMap<>();
 	private final WasmModule module = new WasmModule();
 	public JarHandler(JarInputStream input) throws IOException {
 		File outFile = new File("./out/assets.zip");
@@ -47,6 +51,44 @@ public class JarHandler {
 		parseJar(input, assetsOut); // TODO: not use same assets file?
 	}
 	public WasmModule transpile() {
+		// Fields
+		for (var entry : classes.entrySet()) {
+			Map<ClassHandler.ConstantNameAndTypeInfo, ClassHandler.FieldInfo> fields = new HashMap<>();
+			Map<ClassHandler.ConstantNameAndTypeInfo, Integer> fieldIds = new HashMap<>();
+			for (ClassHandler.FieldInfo field : entry.getValue().fields) {
+				fields.put(field.getNameAndType(), field);
+				if ((field.access_flags & ClassHandler.FieldInfo.ACC_STATIC) == 0) continue;
+				boolean constant = (field.access_flags & ClassHandler.FieldInfo.ACC_FINAL) != 0;
+				var value = field.attributes.constantValue;
+				// Create global for static
+				switch (field.descriptor) {
+					case "I" -> // Integer
+						fieldIds.put(field.getNameAndType(),
+							module.addGlobal(
+								value == null ? 0 : ((ClassHandler.ConstantIntegerInfo) value.value).value(),
+								!constant));
+					case "F" -> // Float
+						fieldIds.put(field.getNameAndType(),
+							module.addGlobal(
+								value == null ? 0F : ((ClassHandler.ConstantFloatInfo) value.value).value(),
+								!constant));
+					case "J" -> // Long
+						fieldIds.put(field.getNameAndType(),
+							module.addGlobal(
+								value == null ? 0L : ((ClassHandler.ConstantLongInfo) value.value).value(),
+								!constant));
+					case "D" -> // Double
+						fieldIds.put(field.getNameAndType(),
+							module.addGlobal(
+								value == null ? 0D : ((ClassHandler.ConstantDoubleInfo) value.value).value(),
+								!constant));
+					default -> throw new RuntimeException("Not Implemented :(");
+				}
+			}
+			staticFieldIndices.put(entry.getKey(), fieldIds);
+			fieldInfo.put(entry.getKey(), fields);
+		}
+		// Methods
 		for (var entry : classes.entrySet()) {
 			Map<ClassHandler.ConstantNameAndTypeInfo, Integer> classMethodIds = new HashMap<>();
 			var classMethods = entry.getValue().prepareFunctions(this.module, this);
@@ -67,7 +109,7 @@ public class JarHandler {
 		return methodIds.get(method.getCls()).get(method.getSignature());
 	}
 
-	public int getOrAddGlobal(ClassHandler.ConstantFieldRefInfo field) {
-		// TODO
+	public int getGlobal(ClassHandler.ConstantFieldRefInfo field) {
+		return staticFieldIndices.get(field.getCls()).get(field.getSignature());
 	}
 }
